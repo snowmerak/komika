@@ -1184,6 +1184,7 @@ async function handleRemoveOne(path: string): Promise<void> {
     showToast("Removed from recents", "success");
   } catch (err) {
     showToast(errMessage(err));
+  } finally {
     render();
   }
 }
