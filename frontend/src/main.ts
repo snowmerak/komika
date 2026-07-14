@@ -22,6 +22,13 @@ import {
   type ViewMode,
   type ViewPreferences,
 } from "./viewer";
+import {
+  clampTileDest,
+  drawImageRegion,
+  HQ_OVERSCAN_CSS,
+  lanczosScaleRegion,
+  shouldUpscaleHQ,
+} from "./upscale";
 
 type ReadingDirection = "rtl" | "ltr";
 type HistoryAction = "disableSaving" | "removeSelected" | "clearAll";
@@ -89,6 +96,7 @@ interface CachedMedia {
 }
 
 const MAX_CONCURRENT_PAGE_LOADS = 2;
+const HQ_PAINT_DEBOUNCE_MS = 120;
 const pageCache = new Map<number, CachedMedia>();
 const pageLoads = new Map<number, Promise<CachedMedia | undefined>>();
 const pageLoadDeferreds = new Map<number, Deferred<CachedMedia | undefined>>();
@@ -409,33 +417,389 @@ function attachMediaElement(
 ): { el: HTMLElement; cleanup: () => void } {
   host.replaceChildren();
   if (media.kind === "image") {
+    const rendering = state.viewPreferences.imageRendering;
+    const mimeLower = media.mime.toLowerCase();
+    const isGif = mimeLower === "image/gif" || mimeLower.startsWith("image/gif");
+    const useHQ = rendering === "highQuality" && !isGif;
+
+    if (!useHQ) {
+      const img = document.createElement("img");
+      const pixelated = rendering === "pixelated";
+      img.className = `${className} reader__media reader__media--image${
+        pixelated ? " reader__media--pixelated" : ""
+      }`;
+      img.alt = alt;
+      img.draggable = false;
+      img.dataset.mediaUrl = media.url;
+      const onLoad = (): void => {
+        onSized({ width: img.naturalWidth, height: img.naturalHeight });
+      };
+      const onError = (): void => {
+        const card = makeUnavailableMediaCard("This media is unavailable.", media.url);
+        card.className = `${className} ${card.className}`;
+        host.replaceChildren(card);
+        onSized({ width: 16, height: 9 });
+      };
+      img.addEventListener("load", onLoad);
+      img.addEventListener("error", onError);
+      img.src = media.url;
+      if (img.complete && img.naturalWidth > 0) onLoad();
+      host.append(img);
+      return {
+        el: img,
+        cleanup: () => {
+          img.removeEventListener("load", onLoad);
+          img.removeEventListener("error", onError);
+        },
+      };
+    }
+
+    // High quality: viewport tile canvas + off-DOM decode for Lanczos.
+    host.classList.add("reader__media-host--hq");
+
+    const canvas = document.createElement("canvas");
+    canvas.className = `${className} reader__media reader__media--image reader__media--hq`;
+    canvas.dataset.mediaUrl = media.url;
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", alt);
+    canvas.style.visibility = "hidden";
+
     const img = document.createElement("img");
-    const pixelated = state.viewPreferences.imageRendering === "pixelated";
-    img.className = `${className} reader__media reader__media--image${
-      pixelated ? " reader__media--pixelated" : ""
-    }`;
-    img.alt = alt;
+    img.decoding = "async";
+    img.alt = "";
     img.draggable = false;
-    img.dataset.mediaUrl = media.url;
+
+    let naturalW = 0;
+    let naturalH = 0;
+    let srcPixels: ImageData | null = null;
+    let drawSource: CanvasImageSource | null = null;
+    let bitmap: ImageBitmap | null = null;
+    let hqTimer: number | null = null;
+    let hqRunning = false;
+    let hqPending = false;
+    let disposed = false;
+    let panning = false;
+
+    interface HqTile {
+      cssX: number;
+      cssY: number;
+      cssW: number;
+      cssH: number;
+      src: { x: number; y: number; w: number; h: number };
+      destW: number;
+      destH: number;
+    }
+
+    const computeVisibleTile = (): HqTile | null => {
+      if (naturalW < 1 || naturalH < 1) return null;
+      const stageEl = host.closest(".reader__stage") as HTMLElement | null;
+      const hostRect = host.getBoundingClientRect();
+      if (hostRect.width <= 0 || hostRect.height <= 0) return null;
+
+      const stageRect = stageEl
+        ? stageEl.getBoundingClientRect()
+        : hostRect;
+
+      let ix0 = Math.max(hostRect.left, stageRect.left);
+      let iy0 = Math.max(hostRect.top, stageRect.top);
+      let ix1 = Math.min(hostRect.right, stageRect.right);
+      let iy1 = Math.min(hostRect.bottom, stageRect.bottom);
+      if (ix1 <= ix0 || iy1 <= iy0) {
+        canvas.style.visibility = "hidden";
+        return null;
+      }
+
+      ix0 = Math.max(hostRect.left, ix0 - HQ_OVERSCAN_CSS);
+      iy0 = Math.max(hostRect.top, iy0 - HQ_OVERSCAN_CSS);
+      ix1 = Math.min(hostRect.right, ix1 + HQ_OVERSCAN_CSS);
+      iy1 = Math.min(hostRect.bottom, iy1 + HQ_OVERSCAN_CSS);
+
+      const cssX = ix0 - hostRect.left;
+      const cssY = iy0 - hostRect.top;
+      const cssW = ix1 - ix0;
+      const cssH = iy1 - iy0;
+      if (cssW < 1 || cssH < 1) {
+        canvas.style.visibility = "hidden";
+        return null;
+      }
+
+      const scaleToNaturalX = naturalW / hostRect.width;
+      const scaleToNaturalY = naturalH / hostRect.height;
+      let sx = cssX * scaleToNaturalX;
+      let sy = cssY * scaleToNaturalY;
+      let sw = cssW * scaleToNaturalX;
+      let sh = cssH * scaleToNaturalY;
+
+      if (sx < 0) {
+        sw += sx;
+        sx = 0;
+      }
+      if (sy < 0) {
+        sh += sy;
+        sy = 0;
+      }
+      if (sx + sw > naturalW) sw = naturalW - sx;
+      if (sy + sh > naturalH) sh = naturalH - sy;
+      if (sw < 1 || sh < 1) {
+        canvas.style.visibility = "hidden";
+        return null;
+      }
+
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const destW0 = Math.round(cssW * dpr);
+      const destH0 = Math.round(cssH * dpr);
+      const { w: destW, h: destH } = clampTileDest(destW0, destH0);
+
+      return {
+        cssX,
+        cssY,
+        cssW,
+        cssH,
+        src: { x: sx, y: sy, w: sw, h: sh },
+        destW,
+        destH,
+      };
+    };
+
+    const requestPaintCheap = (): void => {
+      if (disposed || !drawSource) return;
+      const tile = computeVisibleTile();
+      if (!tile) return;
+      canvas.style.left = `${tile.cssX}px`;
+      canvas.style.top = `${tile.cssY}px`;
+      canvas.style.width = `${tile.cssW}px`;
+      canvas.style.height = `${tile.cssH}px`;
+      if (canvas.width !== tile.destW) canvas.width = tile.destW;
+      if (canvas.height !== tile.destH) canvas.height = tile.destH;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      try {
+        drawImageRegion(ctx, drawSource, tile.src, tile.destW, tile.destH);
+        canvas.style.visibility = "visible";
+      } catch {
+        // keep last frame
+      }
+    };
+
+    const runPaintHQ = (): void => {
+      if (disposed || !srcPixels) {
+        hqRunning = false;
+        return;
+      }
+      const tile = computeVisibleTile();
+      if (!tile) {
+        hqRunning = false;
+        if (hqPending) {
+          hqPending = false;
+          schedulePaintHQ();
+        }
+        return;
+      }
+      const scaleX = tile.destW / tile.src.w;
+      const scaleY = tile.destH / tile.src.h;
+      if (!shouldUpscaleHQ(scaleX, scaleY)) {
+        hqRunning = false;
+        if (hqPending) {
+          hqPending = false;
+          schedulePaintHQ();
+        }
+        return;
+      }
+
+      // Ensure canvas positioned/sized (cheap may have done this).
+      canvas.style.left = `${tile.cssX}px`;
+      canvas.style.top = `${tile.cssY}px`;
+      canvas.style.width = `${tile.cssW}px`;
+      canvas.style.height = `${tile.cssH}px`;
+      if (canvas.width !== tile.destW) canvas.width = tile.destW;
+      if (canvas.height !== tile.destH) canvas.height = tile.destH;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        hqRunning = false;
+        return;
+      }
+
+      try {
+        const imageData = lanczosScaleRegion(srcPixels, tile.src, tile.destW, tile.destH);
+        ctx.putImageData(imageData, 0, 0);
+        canvas.style.visibility = "visible";
+      } catch {
+        if (drawSource) {
+          try {
+            drawImageRegion(ctx, drawSource, tile.src, tile.destW, tile.destH);
+            canvas.style.visibility = "visible";
+          } catch {
+            // keep last frame
+          }
+        }
+      }
+
+      hqRunning = false;
+      if (hqPending) {
+        hqPending = false;
+        schedulePaintHQ();
+      }
+    };
+
+    const schedulePaintHQ = (): void => {
+      if (disposed) return;
+      if (hqTimer != null) {
+        clearTimeout(hqTimer);
+        hqTimer = null;
+      }
+      hqTimer = setTimeout(() => {
+        hqTimer = null;
+        if (disposed) return;
+        if (hqRunning) {
+          hqPending = true;
+          return;
+        }
+        hqRunning = true;
+        // Yield so cheap paints stay responsive during settle.
+        queueMicrotask(runPaintHQ);
+      }, HQ_PAINT_DEBOUNCE_MS);
+    };
+
+    const scheduleFromStage = (): void => {
+      requestPaintCheap();
+      schedulePaintHQ();
+    };
+
+    const onStageWheel = (): void => {
+      requestPaintCheap();
+      schedulePaintHQ();
+    };
+
+    const onStagePointerMove = (ev: PointerEvent): void => {
+      if (ev.buttons === 0 && !panning) return;
+      panning = ev.buttons !== 0;
+      requestPaintCheap();
+      schedulePaintHQ();
+    };
+
+    const onStagePointerUp = (): void => {
+      panning = false;
+      requestPaintCheap();
+      schedulePaintHQ();
+    };
+
+    const onStageScroll = (): void => {
+      requestPaintCheap();
+      schedulePaintHQ();
+    };
+
+    const stageEl = host.closest(".reader__stage") as HTMLElement | null;
+
+    const hostRO = new ResizeObserver(() => {
+      scheduleFromStage();
+    });
+    hostRO.observe(host);
+    let stageRO: ResizeObserver | null = null;
+    if (stageEl) {
+      stageRO = new ResizeObserver(() => {
+        scheduleFromStage();
+      });
+      stageRO.observe(stageEl);
+      stageEl.addEventListener("scroll", onStageScroll, { passive: true });
+      stageEl.addEventListener("wheel", onStageWheel, { passive: true });
+      stageEl.addEventListener("pointermove", onStagePointerMove, { passive: true });
+      stageEl.addEventListener("pointerup", onStagePointerUp, { passive: true });
+      stageEl.addEventListener("pointercancel", onStagePointerUp, { passive: true });
+    }
+
+    let sourceInitStarted = false;
+
+    const captureSourcePixels = async (): Promise<void> => {
+      if (disposed || sourceInitStarted) return;
+      naturalW = img.naturalWidth;
+      naturalH = img.naturalHeight;
+      if (naturalW < 1 || naturalH < 1) return;
+      sourceInitStarted = true;
+
+      onSized({ width: naturalW, height: naturalH });
+      drawSource = img;
+      requestPaintCheap();
+
+      try {
+        if (typeof createImageBitmap === "function") {
+          const nextBitmap = await createImageBitmap(img);
+          if (disposed) {
+            nextBitmap.close();
+            return;
+          }
+          if (bitmap) bitmap.close();
+          bitmap = nextBitmap;
+          drawSource = bitmap;
+        }
+      } catch {
+        // keep HTMLImageElement as drawSource
+      }
+
+      // Extract ImageData for Lanczos from a natural-size canvas.
+      try {
+        const off = document.createElement("canvas");
+        off.width = naturalW;
+        off.height = naturalH;
+        const octx = off.getContext("2d", { willReadFrequently: true });
+        if (octx && drawSource) {
+          octx.drawImage(drawSource, 0, 0);
+          srcPixels = octx.getImageData(0, 0, naturalW, naturalH);
+        }
+      } catch {
+        srcPixels = null;
+      }
+
+      if (disposed) return;
+      requestPaintCheap();
+      schedulePaintHQ();
+    };
+
     const onLoad = (): void => {
-      onSized({ width: img.naturalWidth, height: img.naturalHeight });
+      void captureSourcePixels();
     };
     const onError = (): void => {
+      if (disposed) return;
+      host.classList.remove("reader__media-host--hq");
       const card = makeUnavailableMediaCard("This media is unavailable.", media.url);
       card.className = `${className} ${card.className}`;
       host.replaceChildren(card);
       onSized({ width: 16, height: 9 });
     };
+
     img.addEventListener("load", onLoad);
     img.addEventListener("error", onError);
     img.src = media.url;
     if (img.complete && img.naturalWidth > 0) onLoad();
-    host.append(img);
+
+    host.append(canvas);
     return {
-      el: img,
+      el: canvas,
       cleanup: () => {
+        disposed = true;
+        if (hqTimer != null) {
+          clearTimeout(hqTimer);
+          hqTimer = null;
+        }
+        hostRO.disconnect();
+        stageRO?.disconnect();
+        if (stageEl) {
+          stageEl.removeEventListener("scroll", onStageScroll);
+          stageEl.removeEventListener("wheel", onStageWheel);
+          stageEl.removeEventListener("pointermove", onStagePointerMove);
+          stageEl.removeEventListener("pointerup", onStagePointerUp);
+          stageEl.removeEventListener("pointercancel", onStagePointerUp);
+        }
         img.removeEventListener("load", onLoad);
         img.removeEventListener("error", onError);
+        img.src = "";
+        if (bitmap) {
+          bitmap.close();
+          bitmap = null;
+        }
+        srcPixels = null;
+        drawSource = null;
+        host.classList.remove("reader__media-host--hq");
       },
     };
   }
@@ -1310,6 +1674,7 @@ function renderReader(): HTMLElement {
   renderSelect.setAttribute("aria-label", "Image scaling");
   for (const opt of [
     { value: "smooth", label: "Smooth" },
+    { value: "highQuality", label: "High quality" },
     { value: "pixelated", label: "Pixelated" },
   ] as const) {
     const o = document.createElement("option");

@@ -425,6 +425,21 @@ body {
   image-rendering: pixelated;
 }
 
+.reader__media-host--hq {
+  position: relative;
+  overflow: hidden;
+}
+
+.reader__media--hq {
+  position: absolute;
+  display: block;
+  /* left/top/width/height set in JS to the visible tile */
+  max-width: none;
+  max-height: none;
+  image-rendering: auto;
+  pointer-events: none;
+}
+
 .reader__media--video {
   pointer-events: auto;
   touch-action: manipulation;

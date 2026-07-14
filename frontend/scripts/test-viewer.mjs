@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = join(__dirname, "..");
 const srcFile = join(frontendRoot, "src", "viewer.ts");
+const upscaleSrc = join(frontendRoot, "src", "upscale.ts");
 const require = createRequire(import.meta.url);
 
 function resolveTsc() {
@@ -25,6 +26,7 @@ try {
   const tsc = resolveTsc();
   const args = [
     srcFile,
+    upscaleSrc,
     "--target",
     "ES2020",
     "--module",
@@ -55,6 +57,29 @@ try {
   writeFileSync(join(outDir, "package.json"), JSON.stringify({ type: "module" }));
   const mod = await import(pathToFileURL(outFile).href);
 
+  // ImageData is DOM-only; polyfill for pure Lanczos tests in Node.
+  if (typeof globalThis.ImageData === "undefined") {
+    globalThis.ImageData = class ImageData {
+      constructor(data, width, height) {
+        if (typeof data === "number") {
+          this.width = data;
+          this.height = width;
+          this.data = new Uint8ClampedArray(data * width * 4);
+        } else {
+          this.data = data;
+          this.width = width;
+          this.height = height ?? data.length / (4 * width);
+        }
+      }
+    };
+  }
+
+  const upscaleOut = join(outDir, "upscale.js");
+  if (!existsSync(upscaleOut)) {
+    throw new Error(`compiled output missing: ${upscaleOut}`);
+  }
+  const upscale = await import(pathToFileURL(upscaleOut).href);
+
   const {
     loadViewPreferences,
     saveViewPreferences,
@@ -69,6 +94,14 @@ try {
     releaseHtmlMediaElement,
     VIEW_PREFERENCES_KEY,
   } = mod;
+
+  const {
+    shouldUpscaleHQ,
+    clampTileDest,
+    lanczosScaleRegion,
+    HQ_MAX_TILE_PIXELS,
+    HQ_MAX_TILE_SIDE,
+  } = upscale;
 
   // --- fit / stretch ---
   const stage = { width: 800, height: 600 };
@@ -314,6 +347,92 @@ try {
       stretchSmall: false,
       imageRendering: "smooth",
     });
+  }
+
+  // highQuality imageRendering roundtrip
+  {
+    const s = makeStorage();
+    saveViewPreferences(s, {
+      mode: "fitWindow",
+      stretchSmall: false,
+      imageRendering: "highQuality",
+    });
+    const prefs = loadViewPreferences(s);
+    assert.deepEqual(prefs, {
+      mode: "fitWindow",
+      stretchSmall: false,
+      imageRendering: "highQuality",
+    });
+    assert.equal(s.getItem(VIEW_PREFERENCES_KEY), JSON.stringify(prefs));
+  }
+
+  // --- upscale pure ---
+  assert.equal(shouldUpscaleHQ(1, 1), false);
+  assert.equal(shouldUpscaleHQ(2, 2), true);
+
+  {
+    const capped = clampTileDest(10000, 10000);
+    assert.equal(capped.capped, true);
+    assert.ok(capped.w <= HQ_MAX_TILE_SIDE);
+    assert.ok(capped.h <= HQ_MAX_TILE_SIDE);
+    assert.ok(capped.w * capped.h <= HQ_MAX_TILE_PIXELS);
+  }
+
+  // 4×4 solid red → 4×4; center pixel R within ±1 of 255
+  {
+    const w = 4;
+    const h = 4;
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      data[i * 4] = 255;
+      data[i * 4 + 1] = 0;
+      data[i * 4 + 2] = 0;
+      data[i * 4 + 3] = 255;
+    }
+    const out = lanczosScaleRegion({ data, width: w, height: h }, { x: 0, y: 0, w: 4, h: 4 }, 4, 4);
+    assert.equal(out.width, 4);
+    assert.equal(out.height, 4);
+    const cx = 2;
+    const cy = 2;
+    const r = out.data[(cy * 4 + cx) * 4];
+    assert.ok(Math.abs(r - 255) <= 1, `center R expected ~255, got ${r}`);
+  }
+
+  // 2×2 → 4×4 upscale without throw
+  {
+    const data = new Uint8ClampedArray(2 * 2 * 4);
+    for (let i = 0; i < 4; i++) {
+      data[i * 4] = 128;
+      data[i * 4 + 1] = 64;
+      data[i * 4 + 2] = 32;
+      data[i * 4 + 3] = 255;
+    }
+    const out = lanczosScaleRegion({ data, width: 2, height: 2 }, { x: 0, y: 0, w: 2, h: 2 }, 4, 4);
+    assert.equal(out.width, 4);
+    assert.equal(out.height, 4);
+    assert.equal(out.data.length, 4 * 4 * 4);
+  }
+
+  // Region crop: 4×4 source, region {1,1,2,2} → dest 2×2
+  {
+    const data = new Uint8ClampedArray(4 * 4 * 4);
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        const i = (y * 4 + x) * 4;
+        data[i] = x * 40;
+        data[i + 1] = y * 40;
+        data[i + 2] = 10;
+        data[i + 3] = 255;
+      }
+    }
+    const out = lanczosScaleRegion(
+      { data, width: 4, height: 4 },
+      { x: 1, y: 1, w: 2, h: 2 },
+      2,
+      2
+    );
+    assert.equal(out.width, 2);
+    assert.equal(out.height, 2);
   }
 
   // --- mediaKindForMime ---
