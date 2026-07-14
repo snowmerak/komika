@@ -40,9 +40,11 @@ interface AppState {
   historySettingsOpen: boolean;
   selectedRecentPaths: Set<string>;
   pendingHistoryAction: HistoryAction | null;
+  toolbarCollapsed: boolean;
 }
 
 const DIRECTION_KEY = "komika.readingDirection";
+const TOOLBAR_COLLAPSED_KEY = "komika.readerToolbarCollapsed";
 const DEFAULT_LIBRARY: LibraryState = {
   recents: [],
   settings: { saveRecents: true, retentionDays: 0 },
@@ -69,6 +71,13 @@ const state: AppState = {
   historySettingsOpen: false,
   selectedRecentPaths: new Set(),
   pendingHistoryAction: null,
+  toolbarCollapsed: (() => {
+    try {
+      return localStorage.getItem(TOOLBAR_COLLAPSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  })(),
 };
 
 interface CachedMedia {
@@ -128,6 +137,30 @@ function saveDirection(dir: ReadingDirection): void {
     // ignore
   }
   state.readingDirection = dir;
+}
+
+function persistToolbarCollapsed(): void {
+  try {
+    localStorage.setItem(TOOLBAR_COLLAPSED_KEY, state.toolbarCollapsed ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
+function setToolbarCollapsed(collapsed: boolean): void {
+  if (state.toolbarCollapsed === collapsed) return;
+  state.toolbarCollapsed = collapsed;
+  persistToolbarCollapsed();
+
+  const reader = appRoot.querySelector(".reader");
+  if (!(reader instanceof HTMLElement)) return;
+
+  reader.classList.toggle("reader--toolbar-collapsed", collapsed);
+  const expanded = String(!collapsed);
+  const toggle = reader.querySelector(".reader__toolbar-toggle");
+  const revealBtn = reader.querySelector(".reader__toolbar-reveal-btn");
+  if (toggle instanceof HTMLElement) toggle.setAttribute("aria-expanded", expanded);
+  if (revealBtn instanceof HTMLElement) revealBtn.setAttribute("aria-expanded", expanded);
 }
 
 function errMessage(err: unknown): string {
@@ -1151,7 +1184,6 @@ async function handleRemoveOne(path: string): Promise<void> {
     showToast("Removed from recents", "success");
   } catch (err) {
     showToast(errMessage(err));
-  } finally {
     render();
   }
 }
@@ -1185,6 +1217,7 @@ function renderReader(): HTMLElement {
   const mode = state.viewPreferences.mode;
   const view = document.createElement("div");
   view.className = "view reader";
+  if (state.toolbarCollapsed) view.classList.add("reader--toolbar-collapsed");
 
   const toolbar = document.createElement("header");
   toolbar.className = "reader__toolbar";
@@ -1339,6 +1372,16 @@ function renderReader(): HTMLElement {
   bar.style.width = `${comic.pageCount <= 1 ? 100 : ((activeForProgress + 1) / comic.pageCount) * 100}%`;
   progress.append(bar);
 
+  const collapseBtn = makeButton(
+    "",
+    "mp-button--secondary mp-button--icon",
+    () => setToolbarCollapsed(true),
+    { iconOnly: true, aria: "Collapse toolbar" }
+  );
+  collapseBtn.append(svgIcon('<polyline points="18 15 12 9 6 15"/>'));
+  collapseBtn.setAttribute("aria-expanded", "true");
+  collapseBtn.classList.add("reader__toolbar-toggle");
+
   controls.append(
     prev,
     pageForm,
@@ -1350,10 +1393,27 @@ function renderReader(): HTMLElement {
     zoomReset,
     zoomIn,
     dirBtn,
-    progress
+    progress,
+    collapseBtn
   );
   toolbar.append(back, title, controls);
   toolbar.addEventListener("dblclick", (e) => {
+    if (isInteractiveToolbarTarget(e.target)) return;
+    void WailsWindow.ToggleMaximise();
+  });
+
+  const reveal = document.createElement("div");
+  reveal.className = "reader__toolbar-reveal";
+  const revealBtn = makeButton(
+    "",
+    "mp-button--secondary mp-button--icon reader__toolbar-reveal-btn",
+    () => setToolbarCollapsed(false),
+    { iconOnly: true, aria: "Expand toolbar" }
+  );
+  revealBtn.append(svgIcon('<polyline points="6 9 12 15 18 9"/>'));
+  revealBtn.setAttribute("aria-expanded", "false");
+  reveal.append(revealBtn);
+  reveal.addEventListener("dblclick", (e) => {
     if (isInteractiveToolbarTarget(e.target)) return;
     void WailsWindow.ToggleMaximise();
   });
@@ -1362,7 +1422,7 @@ function renderReader(): HTMLElement {
   stage.className = "reader__stage";
   if (mode === "webtoon") stage.classList.add("reader__stage--webtoon");
 
-  view.append(toolbar, stage);
+  view.append(toolbar, reveal, stage);
 
   const generation = renderGeneration;
   if (mode === "webtoon") {
@@ -2247,6 +2307,11 @@ function onKeyDown(e: KeyboardEvent): void {
     if (state.viewPreferences.mode !== "original" && state.viewPreferences.mode !== "webtoon") {
       setStretchSmall(!state.viewPreferences.stretchSmall);
     }
+    return;
+  }
+  if (key === "t") {
+    e.preventDefault();
+    if (state.comic) setToolbarCollapsed(!state.toolbarCollapsed);
     return;
   }
 

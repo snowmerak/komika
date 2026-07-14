@@ -256,6 +256,26 @@ body {
   flex: 0 0 auto;
 }
 
+.reader__toolbar-reveal {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.25rem;
+  padding: 0.15rem var(--space-3);
+  border-bottom: 1px solid var(--color-border-muted);
+  background: var(--color-bg-subtle);
+  cursor: pointer;
+}
+
+.reader--toolbar-collapsed .reader__toolbar {
+  display: none;
+}
+
+.reader--toolbar-collapsed .reader__toolbar-reveal {
+  display: flex;
+}
+
 .reader__title {
   flex: 1 1 12rem;
   min-width: 0;

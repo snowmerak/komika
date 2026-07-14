@@ -18,6 +18,7 @@ Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives and image/video f
 - Image scaling: **Smooth** (default) or **Pixelated** for still images/GIFs
 - Manual zoom (25–800%, webtoon up to 200%) and pan (wheel / Alt+drag when content overflows)
 - Double-click the reader title/toolbar chrome to maximize or restore the window
+- Collapse the reader toolbar (button or `T`); thin top strip restores it; remembered in `localStorage`
 - Keyboard shortcuts for navigation and mode switching
 - Per-work resume progress
 
@@ -28,7 +29,7 @@ Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives and image/video f
 - Remove one, remove selected, or clear all
 - Disable saving clears history after confirmation
 
-Preferences for view mode/stretch/image scaling are stored in `localStorage`. Recent history lives in the host config dir:
+Preferences for view mode/stretch/image scaling and toolbar collapse are stored in `localStorage`. Recent history lives in the host config dir:
 
 `${os.UserConfigDir()}/komika/library.json`
 
@@ -130,6 +131,7 @@ Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover st
 | `7` / `6` | Double LTR / RTL |
 | `5` | Webtoon |
 | `Z` | Toggle stretch small images |
+| `T` | Toggle reader toolbar |
 
 ## License
 
