@@ -1,0 +1,21 @@
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:dev": "vite build --minify false --mode development",
+    "build": "vite build --mode production",
+    "preview": "vite preview",
+    "test:viewer": "node scripts/test-viewer.mjs"
+  },
+  "dependencies": {
+    "@wailsio/runtime": "latest",
+    "merak-protocol-design-system": "^0.1.3"
+  },
+  "devDependencies": {
+    "typescript": "^4.9.3",
+    "vite": "^8.0.5"
+  }
+}
