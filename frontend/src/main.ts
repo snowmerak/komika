@@ -1779,6 +1779,11 @@ function renderReader(): HTMLElement {
   revealBtn.append(svgIcon('<polyline points="6 9 12 15 18 9"/>'));
   revealBtn.setAttribute("aria-expanded", "false");
   reveal.append(revealBtn);
+  // Whole thin strip expands the toolbar (button is only 4px tall).
+  reveal.addEventListener("click", (e) => {
+    if (e.target === revealBtn || revealBtn.contains(e.target as Node)) return;
+    setToolbarCollapsed(false);
+  });
   reveal.addEventListener("dblclick", (e) => {
     if (isInteractiveToolbarTarget(e.target)) return;
     void WailsWindow.ToggleMaximise();
