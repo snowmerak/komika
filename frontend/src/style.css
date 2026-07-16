@@ -13,8 +13,8 @@ body {
   margin: 0;
   min-height: 100%;
   height: 100%;
-  background: var(--color-bg-base);
-  color: var(--color-text-primary);
+  background: var(--mp-bg-canvas);
+  color: var(--mp-text-primary);
   font-family: var(--font-sans);
 }
 
@@ -66,14 +66,20 @@ body {
   gap: var(--space-3);
 }
 
-.library__empty {
+/* History region — surface tier separates it from the library header */
+.library__history {
   display: grid;
-  gap: var(--space-3);
-  max-width: 42rem;
+  gap: var(--space-4);
   padding: var(--space-5);
-  border: 1px dashed var(--color-border-default);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--mp-bg-surface);
+  box-shadow: var(--mp-shadow-soft);
+}
+
+.library__empty {
+  max-width: none;
+  width: 100%;
+  background: var(--mp-bg-inset);
 }
 
 .history-settings {
@@ -91,7 +97,7 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  color: var(--color-text-secondary);
+  color: var(--mp-text-secondary);
   font-size: 0.92rem;
 }
 
@@ -101,25 +107,32 @@ body {
 
 .history-notice {
   padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--color-border-muted);
+  border: 0;
   border-radius: var(--radius-md);
-  background: var(--color-bg-subtle);
-  color: var(--color-text-secondary);
+  background: var(--mp-bg-inset);
+  color: var(--mp-text-secondary);
+  box-shadow: inset 3px 0 0 var(--mp-warning-base);
 }
 
 .history-confirm {
   display: grid;
   gap: var(--space-3);
-  margin: var(--space-3) 0;
+  margin: 0;
   padding: var(--space-4);
-  border: 1px solid var(--color-border-default);
+  border: 0;
   border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
+  background: var(--mp-bg-elevated);
+  box-shadow: var(--mp-shadow-soft);
 }
 
 .history-confirm__text {
   margin: 0;
-  color: var(--color-text-secondary);
+  color: var(--mp-text-secondary);
+}
+
+.recent-section {
+  display: grid;
+  gap: var(--space-3);
 }
 
 .recent-section__header {
@@ -128,7 +141,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  margin-bottom: var(--space-3);
+  margin-bottom: 0;
 }
 
 .recent-section__bulk {
@@ -140,9 +153,9 @@ body {
 .recent-table-wrap {
   width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--color-border-muted);
-  border-radius: var(--radius-md, 10px);
-  background: var(--color-bg-subtle);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--mp-bg-inset);
 }
 
 .recent-table {
@@ -156,7 +169,7 @@ body {
   padding: 0.75rem 0.9rem;
   text-align: left;
   vertical-align: middle;
-  border-bottom: 1px solid var(--color-border-muted);
+  border-bottom: 1px solid var(--mp-line-soft);
 }
 
 .recent-table thead th {
@@ -164,8 +177,8 @@ body {
   font-weight: 650;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: var(--color-text-muted);
-  background: color-mix(in srgb, var(--color-bg-base) 70%, transparent);
+  color: var(--mp-text-muted);
+  background: color-mix(in srgb, var(--mp-bg-base) 70%, transparent);
   white-space: nowrap;
 }
 
@@ -174,7 +187,7 @@ body {
 }
 
 .recent-table__row:hover {
-  background: color-mix(in srgb, var(--color-bg-base) 55%, transparent);
+  background: var(--mp-bg-hover);
 }
 
 .recent-table__col--select {
@@ -189,14 +202,14 @@ body {
 .recent-table__col--progress {
   width: 7rem;
   white-space: nowrap;
-  color: var(--color-text-secondary);
+  color: var(--mp-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .recent-table__col--opened {
   width: 10rem;
   white-space: nowrap;
-  color: var(--color-text-muted);
+  color: var(--mp-text-muted);
   font-size: 0.88rem;
 }
 
@@ -231,7 +244,7 @@ body {
 
 .recent-table__title-btn:hover,
 .recent-table__title-btn:focus-visible {
-  color: var(--color-accent-line, #7aa2ff);
+  color: var(--mp-accent-line);
   text-decoration: underline;
   outline: none;
 }

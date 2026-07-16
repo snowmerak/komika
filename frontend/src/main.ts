@@ -1474,37 +1474,59 @@ function renderLibrary(): HTMLElement {
   const settings = librarySettings();
   const recents = state.library?.recents ?? [];
 
+  const historyPanel = document.createElement("section");
+  historyPanel.className = "library__history";
+  historyPanel.setAttribute("aria-label", "Recent history");
+
   if (!settings.saveRecents) {
     const notice = document.createElement("div");
     notice.className = "history-notice";
     notice.textContent = "Recent history is not being saved";
-    view.append(notice);
+    historyPanel.append(notice);
   }
 
   if (recents.length === 0) {
     const empty = document.createElement("div");
-    empty.className = "library__empty";
-    const emptyTitle = document.createElement("div");
-    emptyTitle.className = "mp-heading--section";
+    empty.className = "mp-empty-state mp-empty-state--default library__empty";
+    empty.setAttribute("role", "status");
+
+    const emptyIcon = document.createElement("span");
+    emptyIcon.className = "mp-empty-state__icon";
+    emptyIcon.setAttribute("aria-hidden", "true");
+    emptyIcon.innerHTML =
+      '<svg class="mp-symbol mp-symbol--sm" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M5.5 8.5h13v10h-13z"/><path d="M7.5 8.5V5.8h9v2.7"/><path d="M9.5 12.5h5"/>' +
+      "</svg>";
+
+    const emptyTitle = document.createElement("h4");
+    emptyTitle.className = "mp-empty-state__title";
     emptyTitle.textContent = "No recent history";
+
     const emptyBody = document.createElement("p");
-    emptyBody.className = "mp-text--muted";
+    emptyBody.className = "mp-empty-state__body";
     emptyBody.textContent = settings.saveRecents
       ? "Open an archive, folder, or media file to begin reading. Recent history and resume positions appear here."
       : "Saving is disabled. Open an archive, folder, or media file to read without adding to history.";
+
+    const emptyMeta = document.createElement("div");
+    emptyMeta.className = "mp-empty-state__meta";
+    emptyMeta.textContent = settings.saveRecents ? "history:ready" : "history:disabled";
+
     const emptyActions = document.createElement("div");
-    emptyActions.className = "library__actions mp-button-row";
+    emptyActions.className = "mp-empty-state__actions";
     emptyActions.append(
-      makeButton("Open archive", "mp-button--primary", () => void handleOpenArchive()),
-      makeButton("Open folder", "mp-button--secondary", () => void handleOpenFolder()),
-      makeButton("Open media", "mp-button--secondary", () => void handleOpenMedia())
+      makeButton("Open archive", "mp-button--primary mp-button--sm", () => void handleOpenArchive()),
+      makeButton("Open folder", "mp-button--secondary mp-button--sm", () => void handleOpenFolder()),
+      makeButton("Open media", "mp-button--secondary mp-button--sm", () => void handleOpenMedia())
     );
-    empty.append(emptyTitle, emptyBody, emptyActions);
-    view.append(empty);
+
+    empty.append(emptyIcon, emptyTitle, emptyBody, emptyMeta, emptyActions);
+    historyPanel.append(empty);
+    view.append(historyPanel);
     return view;
   }
 
-  const section = document.createElement("section");
+  const section = document.createElement("div");
   section.className = "recent-section";
   const headingRow = document.createElement("div");
   headingRow.className = "recent-section__header";
@@ -1544,7 +1566,8 @@ function renderLibrary(): HTMLElement {
   }
 
   section.append(renderRecentTable(recents, settings.saveRecents));
-  view.append(section);
+  historyPanel.append(section);
+  view.append(historyPanel);
   return view;
 }
 
