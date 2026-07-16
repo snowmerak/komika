@@ -539,6 +539,12 @@ body {
 .reader__markdown-body {
   line-height: 1.55;
 }
+.reader__markdown-body .mp-command-result__value {
+  display: block;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 .reader__media--pdf {
   pointer-events: none;
