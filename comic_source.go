@@ -15,6 +15,8 @@ import (
 	"unicode"
 
 	"github.com/mholt/archives"
+	pdfcpuapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
 const (
@@ -25,20 +27,23 @@ const (
 )
 
 var supportedMediaExts = map[string]string{
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".png":  "image/png",
-	".webp": "image/webp",
-	".gif":  "image/gif",
-	".webm": "video/webm",
-	".mp4":  "video/mp4",
-	".mov":  "video/quicktime",
-	".mp3":  "audio/mpeg",
-	".m4a":  "audio/mp4",
-	".aac":  "audio/aac",
-	".ogg":  "audio/ogg",
-	".opus": "audio/opus",
-	".wav":  "audio/wav",
+	".jpg":      "image/jpeg",
+	".jpeg":     "image/jpeg",
+	".png":      "image/png",
+	".webp":     "image/webp",
+	".gif":      "image/gif",
+	".webm":     "video/webm",
+	".mp4":      "video/mp4",
+	".mov":      "video/quicktime",
+	".mp3":      "audio/mpeg",
+	".m4a":      "audio/mp4",
+	".aac":      "audio/aac",
+	".ogg":      "audio/ogg",
+	".opus":     "audio/opus",
+	".wav":      "audio/wav",
+	".pdf":      "application/pdf",
+	".md":       "text/markdown",
+	".markdown": "text/markdown",
 }
 
 var supportedArchiveExts = map[string]struct{}{
@@ -61,8 +66,10 @@ var (
 
 // PageDescriptor is the bridge-visible per-page media metadata.
 type PageDescriptor struct {
-	Mime     string `json:"mime"`
-	Delivery string `json:"delivery"` // "rpc" | "stream"
+	Mime         string `json:"mime"`
+	Delivery     string `json:"delivery"` // "rpc" | "stream"
+	DocumentPage int    `json:"documentPage,omitempty"` // 1-based; omit/0 if not multi-page doc
+	DocumentKey  string `json:"documentKey,omitempty"`
 }
 
 // delivery modes for page payload transport.
@@ -119,6 +126,12 @@ type pageEntry struct {
 	mime string
 	// sizeBytes is the declared entry size used for delivery selection.
 	sizeBytes int64
+	// documentPage is 1-based page index inside a multi-page document (PDF).
+	// 0 means the entry is a whole-file media page (image/video/audio/markdown).
+	documentPage int
+	// documentKey identifies the underlying file for shared document loads.
+	// Empty when documentPage == 0. For PDF pages: slash-normalized rel path of the PDF.
+	documentKey string
 }
 
 type archiveSource struct {
@@ -225,15 +238,28 @@ func openArchiveSource(path string) (*archiveSource, error) {
 			return fmt.Errorf("archive entry metadata for %s: %w", name, infoErr)
 		}
 		size := info.Size()
-		cands = append(cands, candidate{
-			entry: pageEntry{
-				rel:       rel,
-				sortKey:   strings.ToLower(rel),
-				mime:      mimeForName(base),
-				sizeBytes: size,
-			},
-			name: name,
-		})
+		mime := mimeForName(base)
+		baseEntry := pageEntry{
+			rel:       rel,
+			sortKey:   strings.ToLower(rel),
+			mime:      mime,
+			sizeBytes: size,
+		}
+		if mime == "application/pdf" {
+			n, countErr := pdfPageCountFromFS(fsys, name, size)
+			if countErr != nil || n < 1 {
+				// Skip unreadable PDFs inside multi-entry sources.
+				return nil
+			}
+			for page := 1; page <= n; page++ {
+				e := baseEntry
+				e.documentPage = page
+				e.documentKey = rel
+				cands = append(cands, candidate{entry: e, name: name})
+			}
+			return nil
+		}
+		cands = append(cands, candidate{entry: baseEntry, name: name})
 		return nil
 	})
 	if err != nil {
@@ -243,9 +269,7 @@ func openArchiveSource(path string) (*archiveSource, error) {
 		return nil, errNoSupportedMedia
 	}
 
-	sort.SliceStable(cands, func(i, j int) bool {
-		return naturalLess(cands[i].entry.sortKey, cands[j].entry.sortKey, cands[i].entry.rel, cands[j].entry.rel)
-	})
+	sortPageCandidates(cands, func(i int) pageEntry { return cands[i].entry })
 
 	entries := make([]pageEntry, len(cands))
 	names := make([]string, len(cands))
@@ -308,15 +332,28 @@ func openFolderSource(path string) (*folderSource, error) {
 			return err
 		}
 		rel = slashNormalize(rel)
-		cands = append(cands, candidate{
-			entry: pageEntry{
-				rel:       rel,
-				sortKey:   strings.ToLower(rel),
-				mime:      mimeForName(d.Name()),
-				sizeBytes: info.Size(),
-			},
-			absPath: p,
-		})
+		mime := mimeForName(d.Name())
+		baseEntry := pageEntry{
+			rel:       rel,
+			sortKey:   strings.ToLower(rel),
+			mime:      mime,
+			sizeBytes: info.Size(),
+		}
+		if mime == "application/pdf" {
+			n, countErr := pdfPageCountFile(p)
+			if countErr != nil || n < 1 {
+				// Skip unreadable PDFs inside multi-entry sources.
+				return nil
+			}
+			for page := 1; page <= n; page++ {
+				e := baseEntry
+				e.documentPage = page
+				e.documentKey = rel
+				cands = append(cands, candidate{entry: e, absPath: p})
+			}
+			return nil
+		}
+		cands = append(cands, candidate{entry: baseEntry, absPath: p})
 		return nil
 	})
 	if err != nil {
@@ -327,7 +364,7 @@ func openFolderSource(path string) (*folderSource, error) {
 	}
 
 	sort.SliceStable(cands, func(i, j int) bool {
-		return naturalLess(cands[i].entry.sortKey, cands[j].entry.sortKey, cands[i].entry.rel, cands[j].entry.rel)
+		return pageEntryLess(cands[i].entry, cands[j].entry)
 	})
 
 	entries := make([]pageEntry, len(cands))
@@ -355,17 +392,44 @@ func openMediaSource(path string, info os.FileInfo) (*folderSource, error) {
 		return nil, errUnsupportedSource
 	}
 	rel := base
+	mime := mimeForName(base)
+	baseEntry := pageEntry{
+		rel:       rel,
+		sortKey:   strings.ToLower(rel),
+		mime:      mime,
+		sizeBytes: info.Size(),
+	}
+
+	var entries []pageEntry
+	var absPaths []string
+	if mime == "application/pdf" {
+		n, err := pdfPageCountFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("could not open PDF: %w", err)
+		}
+		if n < 1 {
+			return nil, fmt.Errorf("could not open PDF: no pages")
+		}
+		entries = make([]pageEntry, n)
+		absPaths = make([]string, n)
+		for page := 1; page <= n; page++ {
+			e := baseEntry
+			e.documentPage = page
+			e.documentKey = rel
+			entries[page-1] = e
+			absPaths[page-1] = path
+		}
+	} else {
+		entries = []pageEntry{baseEntry}
+		absPaths = []string{path}
+	}
+
 	return &folderSource{
-		path:  path,
-		title: titleFromPath(path),
-		kind:  sourceTypeMedia,
-		entries: []pageEntry{{
-			rel:       rel,
-			sortKey:   strings.ToLower(rel),
-			mime:      mimeForName(base),
-			sizeBytes: info.Size(),
-		}},
-		absPaths: []string{path},
+		path:     path,
+		title:    titleFromPath(path),
+		kind:     sourceTypeMedia,
+		entries:  entries,
+		absPaths: absPaths,
 	}, nil
 }
 
@@ -386,10 +450,7 @@ func (s *archiveSource) PageDescriptor(index int) PageDescriptor {
 		return PageDescriptor{}
 	}
 	e := s.entries[index]
-	return PageDescriptor{
-		Mime:     e.mime,
-		Delivery: deliveryForSize(e.sizeBytes),
-	}
+	return pageDescriptorFromEntry(e)
 }
 
 func (s *archiveSource) StreamPage(index int) (pageStream, error) {
@@ -445,10 +506,7 @@ func (s *folderSource) PageDescriptor(index int) PageDescriptor {
 		return PageDescriptor{}
 	}
 	e := s.entries[index]
-	return PageDescriptor{
-		Mime:     e.mime,
-		Delivery: deliveryForSize(e.sizeBytes),
-	}
+	return pageDescriptorFromEntry(e)
 }
 
 func (s *folderSource) StreamPage(index int) (pageStream, error) {
@@ -522,6 +580,84 @@ func mimeForName(name string) string {
 		return mime
 	}
 	return "application/octet-stream"
+}
+
+func pageDescriptorFromEntry(e pageEntry) PageDescriptor {
+	return PageDescriptor{
+		Mime:         e.mime,
+		Delivery:     deliveryForSize(e.sizeBytes),
+		DocumentPage: e.documentPage,
+		DocumentKey:  e.documentKey,
+	}
+}
+
+func pageEntryLess(a, b pageEntry) bool {
+	if a.sortKey != b.sortKey {
+		return naturalLess(a.sortKey, b.sortKey, a.rel, b.rel)
+	}
+	if a.documentPage != b.documentPage {
+		return a.documentPage < b.documentPage
+	}
+	return a.rel < b.rel
+}
+
+// sortPageCandidates sorts archive candidates by pageEntryLess.
+// entryAt extracts the pageEntry for index i from the underlying slice.
+func sortPageCandidates[T any](cands []T, entryAt func(int) pageEntry) {
+	sort.SliceStable(cands, func(i, j int) bool {
+		return pageEntryLess(entryAt(i), entryAt(j))
+	})
+}
+
+func pdfPageCountFile(path string) (int, error) {
+	n, err := pdfcpuapi.PageCountFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// pdfPageCountFromFS materializes an archive member to a temp file, counts pages, then deletes the temp.
+func pdfPageCountFromFS(fsys fs.FS, name string, size int64) (int, error) {
+	// Cap temp materialization similarly to stream reads (2 GiB mindset not needed for count;
+	// still avoid unbounded reads — use max of file size if known, else stream copy).
+	f, err := fsys.Open(name)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	// Prefer ReadSeeker path without temp when available.
+	if rs, ok := f.(io.ReadSeeker); ok {
+		return pdfcpuapi.PageCount(rs, model.NewDefaultConfiguration())
+	}
+
+	tmp, err := os.CreateTemp("", "komika-pdf-*")
+	if err != nil {
+		return 0, err
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+	}()
+
+	// Bound copy: reuse maxPageBytes*64 (~2GiB) only as safety; prefer declared size.
+	limit := int64(2 << 30)
+	if size > 0 && size < limit {
+		limit = size
+	}
+	written, err := io.Copy(tmp, io.LimitReader(f, limit+1))
+	if err != nil {
+		return 0, err
+	}
+	if written > limit {
+		return 0, fmt.Errorf("pdf member too large to count")
+	}
+	if err := tmp.Close(); err != nil {
+		return 0, err
+	}
+	return pdfPageCountFile(tmpPath)
 }
 
 func titleFromPath(path string) string {

@@ -242,7 +242,7 @@ export function orderPageLoadIndices(
   });
 }
 
-export type MediaKind = "image" | "video" | "audio";
+export type MediaKind = "image" | "video" | "audio" | "pdf" | "markdown";
 
 export function mediaKindForMime(mime: string): MediaKind | null {
   if (typeof mime !== "string" || mime === "") return null;
@@ -261,6 +261,8 @@ export function mediaKindForMime(mime: string): MediaKind | null {
   ) {
     return "audio";
   }
+  if (lower === "application/pdf") return "pdf";
+  if (lower === "text/markdown" || lower === "text/x-markdown") return "markdown";
   return null;
 }
 
@@ -285,6 +287,9 @@ export function shouldLoadMediaDelivery(
   if (!kind) return false;
   const isStream = delivery === "stream";
   if (isStream && !visible.has(index)) return false;
-  if ((kind === "video" || kind === "audio") && !visible.has(index)) return false;
+  // Video/audio/pdf are visible-only (pdf loads a whole document).
+  if ((kind === "video" || kind === "audio" || kind === "pdf") && !visible.has(index)) {
+    return false;
+  }
   return true;
 }

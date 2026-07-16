@@ -57,7 +57,7 @@ export function OpenFolder(): $CancellablePromise<$models.Comic | null> {
 }
 
 /**
- * OpenMedia prompts for a supported image, GIF, video, or audio file and opens it.
+ * OpenMedia prompts for a supported image, video, audio, PDF, or markdown file and opens it.
  */
 export function OpenMedia(): $CancellablePromise<$models.Comic | null> {
     return $Call.ByID(3596181480);

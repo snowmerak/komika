@@ -50,6 +50,12 @@ export interface PageDescriptor {
      * "rpc" | "stream"
      */
     "delivery": string;
+
+    /**
+     * 1-based; omit/0 if not multi-page doc
+     */
+    "documentPage"?: number;
+    "documentKey"?: string;
 }
 
 /**

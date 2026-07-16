@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -609,5 +610,334 @@ func TestTitleFromPathArchiveExts(t *testing.T) {
 		if got := titleFromPath(in); got != want {
 			t.Fatalf("titleFromPath(%q)=%q want %q", in, got, want)
 		}
+	}
+}
+
+func writeMinimalPDF(t *testing.T, path string, pages int) {
+	t.Helper()
+	if pages < 1 {
+		t.Fatalf("pages must be >= 1, got %d", pages)
+	}
+	// Minimal multi-page PDF sufficient for pdfcpu PageCountFile.
+	var (
+		kids         []int
+		pageIDs      []int
+		contentIDs   []int
+		contentBodies [][]byte
+	)
+	nextID := 3
+	for i := 0; i < pages; i++ {
+		contentID := nextID
+		pageID := nextID + 1
+		nextID += 2
+		contentBodies = append(contentBodies, []byte(fmt.Sprintf("BT /F1 12 Tf 100 700 Td (Page %d) Tj ET", i+1)))
+		contentIDs = append(contentIDs, contentID)
+		pageIDs = append(pageIDs, pageID)
+		kids = append(kids, pageID)
+	}
+	fontID := nextID
+
+	var out bytes.Buffer
+	out.WriteString("%PDF-1.4\n")
+	offsets := map[int]int{0: 0}
+	writeObj := func(num int, body string) {
+		offsets[num] = out.Len()
+		fmt.Fprintf(&out, "%d 0 obj\n%s\nendobj\n", num, body)
+	}
+	writeObj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+	kidRefs := make([]string, len(kids))
+	for i, k := range kids {
+		kidRefs[i] = fmt.Sprintf("%d 0 R", k)
+	}
+	writeObj(2, fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kidRefs, " "), pages))
+	writeObj(fontID, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+	for i, pageID := range pageIDs {
+		writeObj(pageID, fmt.Sprintf(
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R /Resources << /Font << /F1 %d 0 R >> >> >>",
+			contentIDs[i], fontID,
+		))
+	}
+	for i, contentID := range contentIDs {
+		body := contentBodies[i]
+		offsets[contentID] = out.Len()
+		fmt.Fprintf(&out, "%d 0 obj\n<< /Length %d >>\nstream\n%s\nendstream\nendobj\n", contentID, len(body), body)
+	}
+	xrefPos := out.Len()
+	maxObj := fontID
+	for _, id := range contentIDs {
+		if id > maxObj {
+			maxObj = id
+		}
+	}
+	for _, id := range pageIDs {
+		if id > maxObj {
+			maxObj = id
+		}
+	}
+	fmt.Fprintf(&out, "xref\n0 %d\n", maxObj+1)
+	out.WriteString("0000000000 65535 f \n")
+	for i := 1; i <= maxObj; i++ {
+		fmt.Fprintf(&out, "%010d 00000 n \n", offsets[i])
+	}
+	fmt.Fprintf(&out, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", maxObj+1, xrefPos)
+	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenStandaloneMarkdown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "note.md")
+	body := []byte("# Hello\n\n- one\n")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := openPageSource(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if src.SourceType() != sourceTypeMedia {
+		t.Fatalf("source type: got %q", src.SourceType())
+	}
+	if src.PageCount() != 1 {
+		t.Fatalf("page count: %d", src.PageCount())
+	}
+	desc := src.PageDescriptor(0)
+	if desc.Mime != "text/markdown" {
+		t.Fatalf("mime: %q", desc.Mime)
+	}
+	if desc.DocumentPage != 0 || desc.DocumentKey != "" {
+		t.Fatalf("document fields: %+v", desc)
+	}
+	mime, data, err := src.ReadPage(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mime != "text/markdown" || !bytes.Equal(data, body) {
+		t.Fatalf("read: mime=%q data=%q", mime, data)
+	}
+}
+
+func TestOpenStandalonePDF(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "doc.pdf")
+	writeMinimalPDF(t, path, 3)
+
+	src, err := openPageSource(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if src.SourceType() != sourceTypeMedia {
+		t.Fatalf("source type: got %q", src.SourceType())
+	}
+	if src.PageCount() != 3 {
+		t.Fatalf("page count: %d", src.PageCount())
+	}
+	if src.Title() != "doc.pdf" {
+		t.Fatalf("title: %q", src.Title())
+	}
+	var firstKey string
+	for i := 0; i < 3; i++ {
+		desc := src.PageDescriptor(i)
+		if desc.Mime != "application/pdf" {
+			t.Fatalf("page %d mime: %q", i, desc.Mime)
+		}
+		if desc.DocumentPage != i+1 {
+			t.Fatalf("page %d DocumentPage: %d", i, desc.DocumentPage)
+		}
+		if desc.DocumentKey == "" {
+			t.Fatalf("page %d missing DocumentKey", i)
+		}
+		if i == 0 {
+			firstKey = desc.DocumentKey
+		} else if desc.DocumentKey != firstKey {
+			t.Fatalf("document key mismatch: %q vs %q", desc.DocumentKey, firstKey)
+		}
+		mime, data, err := src.ReadPage(i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mime != "application/pdf" || len(data) == 0 {
+			t.Fatalf("read page %d: mime=%q len=%d", i, mime, len(data))
+		}
+	}
+}
+
+func TestOpenFolderMixedDocsAndImages(t *testing.T) {
+	dir := t.TempDir()
+	writePNG(t, filepath.Join(dir, "a.png"), 0x22)
+	writeMinimalPDF(t, filepath.Join(dir, "b.pdf"), 2)
+	if err := os.WriteFile(filepath.Join(dir, "c.md"), []byte("# c\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	src, err := openPageSource(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if src.SourceType() != sourceTypeFolder {
+		t.Fatalf("source type: %q", src.SourceType())
+	}
+	// a.png, b.pdf x2, c.md
+	if src.PageCount() != 4 {
+		t.Fatalf("page count: %d names=%v", src.PageCount(), pageNames(src))
+	}
+	want := []struct {
+		rel  string
+		mime string
+		page int
+		key  string
+	}{
+		{"a.png", "image/png", 0, ""},
+		{"b.pdf", "application/pdf", 1, "b.pdf"},
+		{"b.pdf", "application/pdf", 2, "b.pdf"},
+		{"c.md", "text/markdown", 0, ""},
+	}
+	names := pageNames(src)
+	for i, tc := range want {
+		if names[i] != tc.rel {
+			t.Fatalf("name[%d]=%q want %q (all=%v)", i, names[i], tc.rel, names)
+		}
+		desc := src.PageDescriptor(i)
+		if desc.Mime != tc.mime || desc.DocumentPage != tc.page || desc.DocumentKey != tc.key {
+			t.Fatalf("desc[%d]=%+v want mime=%s page=%d key=%q", i, desc, tc.mime, tc.page, tc.key)
+		}
+	}
+}
+
+func TestFolderSkipsCorruptPDF(t *testing.T) {
+	dir := t.TempDir()
+	writePNG(t, filepath.Join(dir, "ok.png"), 0x33)
+	if err := os.WriteFile(filepath.Join(dir, "bad.pdf"), []byte("%PDF-not-a-real-file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := openPageSource(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if src.PageCount() != 1 {
+		t.Fatalf("page count: %d names=%v", src.PageCount(), pageNames(src))
+	}
+	if pageNames(src)[0] != "ok.png" {
+		t.Fatalf("names: %v", pageNames(src))
+	}
+}
+
+func TestStandaloneCorruptPDF(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-not-a-real-file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := openPageSource(path)
+	if err == nil {
+		t.Fatal("expected error for corrupt PDF")
+	}
+	if !strings.Contains(err.Error(), "could not open PDF") {
+		t.Fatalf("error: %v", err)
+	}
+}
+
+func TestOpenCommittedDocsFixture(t *testing.T) {
+	mdPath := filepath.Join("testdata", "docs-fixture", "hello.md")
+	pdfPath := filepath.Join("testdata", "docs-fixture", "sample.pdf")
+
+	mdSrc, err := openPageSource(mdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mdSrc.Close()
+	if mdSrc.PageCount() != 1 || mdSrc.PageDescriptor(0).Mime != "text/markdown" {
+		t.Fatalf("md: pages=%d mime=%q", mdSrc.PageCount(), mdSrc.PageDescriptor(0).Mime)
+	}
+	mime, data, err := mdSrc.ReadPage(0)
+	if err != nil || mime != "text/markdown" || !bytes.Contains(data, []byte("# Hello Komika")) {
+		t.Fatalf("md read: mime=%q err=%v data=%q", mime, err, data)
+	}
+
+	pdfSrc, err := openPageSource(pdfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pdfSrc.Close()
+	if pdfSrc.PageCount() < 2 {
+		t.Fatalf("pdf pages: %d", pdfSrc.PageCount())
+	}
+	if pdfSrc.PageDescriptor(0).DocumentPage != 1 || pdfSrc.PageDescriptor(0).Mime != "application/pdf" {
+		t.Fatalf("pdf desc0: %+v", pdfSrc.PageDescriptor(0))
+	}
+}
+
+func TestOpenArchiveWithPDFExpansion(t *testing.T) {
+	dir := t.TempDir()
+	pdfPath := filepath.Join(dir, "inner.pdf")
+	writeMinimalPDF(t, pdfPath, 2)
+	pdfBytes, err := os.ReadFile(pdfPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	zipPath := filepath.Join(dir, "docs.cbz")
+	f, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	w, err := zw.Create("pages/a.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(tinyPNG(0x44)); err != nil {
+		t.Fatal(err)
+	}
+	w, err = zw.Create("pages/b.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(pdfBytes); err != nil {
+		t.Fatal(err)
+	}
+	w, err = zw.Create("pages/c.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("# note\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	src, err := openPageSource(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if src.SourceType() != sourceTypeArchive {
+		t.Fatalf("type: %q", src.SourceType())
+	}
+	// a.png + b.pdf x2 + c.md
+	if src.PageCount() != 4 {
+		t.Fatalf("pages: %d names=%v", src.PageCount(), pageNames(src))
+	}
+	names := pageNames(src)
+	if names[0] != "pages/a.png" || names[1] != "pages/b.pdf" || names[2] != "pages/b.pdf" || names[3] != "pages/c.md" {
+		t.Fatalf("names: %v", names)
+	}
+	d1 := src.PageDescriptor(1)
+	d2 := src.PageDescriptor(2)
+	if d1.Mime != "application/pdf" || d1.DocumentPage != 1 || d1.DocumentKey != "pages/b.pdf" {
+		t.Fatalf("desc1: %+v", d1)
+	}
+	if d2.DocumentPage != 2 || d2.DocumentKey != d1.DocumentKey {
+		t.Fatalf("desc2: %+v", d2)
+	}
+	mime, data, err := src.ReadPage(1)
+	if err != nil || mime != "application/pdf" || len(data) == 0 {
+		t.Fatalf("read: mime=%q len=%d err=%v", mime, len(data), err)
 	}
 }

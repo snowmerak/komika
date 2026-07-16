@@ -448,6 +448,9 @@ try {
   assert.equal(mediaKindForMime("audio/ogg"), "audio");
   assert.equal(mediaKindForMime("audio/opus"), "audio");
   assert.equal(mediaKindForMime("audio/wav"), "audio");
+  assert.equal(mediaKindForMime("application/pdf"), "pdf");
+  assert.equal(mediaKindForMime("text/markdown"), "markdown");
+  assert.equal(mediaKindForMime("text/x-markdown"), "markdown");
   assert.equal(mediaKindForMime("audio/flac"), null);
   assert.equal(mediaKindForMime("video/x-msvideo"), null);
   assert.equal(mediaKindForMime("application/octet-stream"), null);
@@ -469,6 +472,15 @@ try {
   assert.equal(shouldLoadMediaDelivery("stream", "audio", 2, new Set([0, 1])), false);
   assert.equal(shouldLoadMediaDelivery("rpc", "audio", 1, new Set([0, 1])), true);
   assert.equal(shouldLoadMediaDelivery("stream", "audio", 1, new Set([0, 1])), true);
+  // markdown follows image-like prefetch for rpc
+  assert.equal(shouldLoadMediaDelivery("rpc", "markdown", 2, new Set([0])), true);
+  assert.equal(shouldLoadMediaDelivery("stream", "markdown", 2, new Set([0])), false);
+  assert.equal(shouldLoadMediaDelivery("stream", "markdown", 0, new Set([0])), true);
+  // pdf is visible-only like video/audio
+  assert.equal(shouldLoadMediaDelivery("rpc", "pdf", 2, new Set([0])), false);
+  assert.equal(shouldLoadMediaDelivery("stream", "pdf", 2, new Set([0])), false);
+  assert.equal(shouldLoadMediaDelivery("rpc", "pdf", 0, new Set([0])), true);
+  assert.equal(shouldLoadMediaDelivery("stream", "pdf", 1, new Set([0, 1])), true);
   // unknown kind never loads
   assert.equal(shouldLoadMediaDelivery("rpc", null, 0, new Set([0])), false);
 

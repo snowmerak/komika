@@ -85,17 +85,17 @@ func (s *ComicService) OpenFolder() (*Comic, error) {
 	return s.openPath(path, false)
 }
 
-// OpenMedia prompts for a supported image, GIF, video, or audio file and opens it.
+// OpenMedia prompts for a supported image, video, audio, PDF, or markdown file and opens it.
 func (s *ComicService) OpenMedia() (*Comic, error) {
 	app := application.Get()
 	if app == nil {
 		return nil, errors.New("application not ready")
 	}
 	path, err := app.Dialog.OpenFile().
-		SetTitle("Open media").
+		SetTitle("Open media or document").
 		CanChooseFiles(true).
 		CanChooseDirectories(false).
-		AddFilter("Images, video, and audio", "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.webm;*.mp4;*.mov;*.mp3;*.m4a;*.aac;*.ogg;*.opus;*.wav").
+		AddFilter("Images, video, audio, and documents", "*.jpg;*.jpeg;*.png;*.webp;*.gif;*.webm;*.mp4;*.mov;*.mp3;*.m4a;*.aac;*.ogg;*.opus;*.wav;*.pdf;*.md;*.markdown").
 		PromptForSingleSelection()
 	if err != nil {
 		return nil, err
@@ -283,10 +283,10 @@ func (s *ComicService) openPath(path string, _ bool) (*Comic, error) {
 
 func userFacingOpenError(err error) error {
 	if errors.Is(err, errNoSupportedMedia) {
-		return errors.New("no supported image, video, or audio entries found in the selected source")
+		return errors.New("no supported image, video, audio, PDF, or markdown entries found in the selected source")
 	}
 	if errors.Is(err, errUnsupportedSource) {
-		return errors.New("unsupported file type; open an archive, folder, or supported image/video/audio")
+		return errors.New("unsupported file type; open an archive, folder, or supported image/video/audio/PDF/markdown")
 	}
 	return err
 }

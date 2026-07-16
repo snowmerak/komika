@@ -3,6 +3,7 @@ import "./style.css";
 import { ComicService } from "../bindings/komika";
 import type { Comic, LibrarySettings, LibraryState, RecentComic } from "../bindings/komika";
 import { Events, Window as WailsWindow } from "@wailsio/runtime";
+import { renderMerakMarkdown } from "merak-protocol-design-system/markdown";
 import {
   cacheIndices,
   clampPan,
@@ -29,6 +30,7 @@ import {
   lanczosScaleRegion,
   shouldUpscaleHQ,
 } from "./upscale";
+import { attachPdfPage, clearPdfDocCache } from "./pdf_render";
 
 type ReadingDirection = "rtl" | "ltr";
 type HistoryAction = "disableSaving" | "removeSelected" | "clearAll";
@@ -93,6 +95,8 @@ interface CachedMedia {
   url: string;
   delivery: "blob" | "stream";
   streamToken?: string;
+  documentPage?: number;
+  documentKey?: string;
 }
 
 const MAX_CONCURRENT_PAGE_LOADS = 2;
@@ -101,6 +105,33 @@ const pageCache = new Map<number, CachedMedia>();
 const pageLoads = new Map<number, Promise<CachedMedia | undefined>>();
 const pageLoadDeferreds = new Map<number, Deferred<CachedMedia | undefined>>();
 const pageLoadErrors = new Map<number, unknown>();
+// Shared PDF document load state: one fetch + owner per documentKey.
+interface PdfDocState {
+  owner?: CachedMedia;
+  fetch?: Promise<CachedMedia>;
+  waiters: number;
+  pageRefs: number;
+}
+const pdfDocs = new Map<string, PdfDocState>();
+
+function releasePdfDocResources(owner: CachedMedia): void {
+  if (owner.delivery === "blob") {
+    URL.revokeObjectURL(owner.url);
+    return;
+  }
+  if (owner.streamToken) {
+    void ComicService.ReleasePageStream(owner.streamToken).catch(() => {});
+  }
+}
+
+function maybeDisposePdfDoc(key: string): void {
+  const state = pdfDocs.get(key);
+  if (!state) return;
+  if (state.waiters > 0 || state.pageRefs > 0 || state.fetch) return;
+  if (state.owner) releasePdfDocResources(state.owner);
+  pdfDocs.delete(key);
+}
+
 
 type PageLoadPriority = "visible" | "background";
 
@@ -355,8 +386,26 @@ async function flushProgress(): Promise<void> {
 
 function revokeCached(media: CachedMedia | undefined): void {
   if (!media) return;
+
+  if (media.kind === "pdf" && media.documentKey) {
+    const key = media.documentKey;
+    const state = pdfDocs.get(key);
+    if (state && state.pageRefs > 0) {
+      state.pageRefs -= 1;
+      maybeDisposePdfDoc(key);
+    }
+    return;
+  }
+
   if (media.delivery === "blob") {
-    URL.revokeObjectURL(media.url);
+    let shared = false;
+    for (const other of pageCache.values()) {
+      if (other !== media && other.url === media.url) {
+        shared = true;
+        break;
+      }
+    }
+    if (!shared) URL.revokeObjectURL(media.url);
     return;
   }
   if (media.streamToken) {
@@ -379,12 +428,30 @@ function clearQueuedPageLoads(): void {
 }
 
 function clearPageCache(): void {
+  const seenStreamTokens = new Set<string>();
+  const seenBlobUrls = new Set<string>();
   for (const media of pageCache.values()) {
-    revokeCached(media);
+    if (media.kind === "pdf") continue;
+    if (media.delivery === "stream" && media.streamToken) {
+      if (seenStreamTokens.has(media.streamToken)) continue;
+      seenStreamTokens.add(media.streamToken);
+      void ComicService.ReleasePageStream(media.streamToken).catch(() => {});
+      continue;
+    }
+    if (media.delivery === "blob") {
+      if (seenBlobUrls.has(media.url)) continue;
+      seenBlobUrls.add(media.url);
+      URL.revokeObjectURL(media.url);
+    }
   }
+  for (const state of pdfDocs.values()) {
+    if (state.owner) releasePdfDocResources(state.owner);
+  }
+  pdfDocs.clear();
   pageCache.clear();
   clearQueuedPageLoads();
   pageLoads.clear();
+  clearPdfDocCache();
 }
 
 function decodePayloadData(data: string | null | undefined): Uint8Array {
@@ -803,6 +870,90 @@ function attachMediaElement(
       },
     };
   }
+  if (media.kind === "markdown") {
+    const shell = document.createElement("div");
+    shell.className = `${className} reader__media reader__media--markdown`;
+    shell.dataset.mediaUrl = media.url;
+    const article = document.createElement("article");
+    article.className = "reader__markdown-body";
+    article.textContent = "Loading…";
+    shell.append(article);
+    host.append(shell);
+    onSized({ width: 800, height: 1200 });
+
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(media.url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`markdown fetch failed: ${res.status}`);
+        const text = await res.text();
+        if (controller.signal.aborted) return;
+        article.innerHTML = renderMerakMarkdown(text);
+        onSized({ width: 800, height: Math.max(1200, article.scrollHeight) });
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        const card = makeUnavailableMediaCard("This media is unavailable.", media.url);
+        card.className = `${className} ${card.className}`;
+        host.replaceChildren(card);
+        onSized({ width: 16, height: 9 });
+      }
+    })();
+
+    return {
+      el: shell,
+      cleanup: () => {
+        controller.abort();
+      },
+    };
+  }
+
+  if (media.kind === "pdf") {
+    const pageNum = media.documentPage && media.documentPage > 0 ? media.documentPage : 1;
+    const cacheKey = media.documentKey ?? media.url;
+    const placeholder = document.createElement("div");
+    placeholder.className = `${className} reader__media reader__media--pdf-loading`;
+    placeholder.dataset.mediaUrl = media.url;
+    placeholder.textContent = "Loading PDF…";
+    host.append(placeholder);
+    onSized({ width: 612, height: 792 });
+
+    let disposed = false;
+    let pdfCleanup: (() => void) | null = null;
+    void (async () => {
+      try {
+        const attached = await attachPdfPage(host, {
+          url: media.url,
+          cacheKey,
+          pageNum,
+          className,
+          mediaUrl: media.url,
+          onSized,
+        });
+        if (disposed) {
+          attached.cleanup();
+          return;
+        }
+        // Replace loading placeholder with canvas (attachPdfPage appends canvas).
+        placeholder.remove();
+        pdfCleanup = attached.cleanup;
+      } catch {
+        if (disposed) return;
+        const card = makeUnavailableMediaCard("This media is unavailable.", media.url);
+        card.className = `${className} ${card.className}`;
+        host.replaceChildren(card);
+        onSized({ width: 16, height: 9 });
+      }
+    })();
+
+    return {
+      el: placeholder,
+      cleanup: () => {
+        disposed = true;
+        pdfCleanup?.();
+      },
+    };
+  }
+
   if (media.kind === "audio") {
     const probe = document.createElement("audio");
     if (probe.canPlayType(media.mime) === "") {
@@ -921,7 +1072,10 @@ function trimCache(
     const cached = pageCache.get(key);
     if (!cached) continue;
     const shouldKeep =
-      cached.kind === "video" || cached.kind === "audio" || cached.delivery === "stream"
+      cached.kind === "video" ||
+      cached.kind === "audio" ||
+      cached.kind === "pdf" ||
+      cached.delivery === "stream"
         ? visible.has(key)
         : keep.has(key);
     if (!shouldKeep) {
@@ -1044,7 +1198,7 @@ function stillWanted(index: number, comic: Comic): boolean {
   } else {
     retainVisible = new Set([state.pageIndex]);
   }
-  if (desc?.delivery === "stream" || kind === "video" || kind === "audio") {
+  if (desc?.delivery === "stream" || kind === "video" || kind === "audio" || kind === "pdf") {
     return shouldLoadMediaDelivery(desc?.delivery, kind, index, retainVisible);
   }
   return cacheIndices(active, comic.pageCount, mode).has(index);
@@ -1054,32 +1208,142 @@ async function loadOnePage(index: number): Promise<CachedMedia | undefined> {
   const comic = state.comic;
   if (!comic) return undefined;
   const desc = comic.pages?.[index];
+  const kind = mediaKindForMime(desc?.mime ?? "");
+  if (!kind) throw new Error(`unsupported media mime: ${desc?.mime ?? ""}`);
+
+  const documentPage = desc?.documentPage && desc.documentPage > 0 ? desc.documentPage : undefined;
+  const documentKey = desc?.documentKey || undefined;
+
+  if (kind === "pdf" && documentKey) {
+    let docState = pdfDocs.get(documentKey);
+    if (!docState) {
+      docState = { waiters: 0, pageRefs: 0 };
+      pdfDocs.set(documentKey, docState);
+    }
+    docState.waiters += 1;
+
+    try {
+      if (!docState.owner && !docState.fetch) {
+        const fetchIndex = index;
+        const fetchDesc = desc;
+        const fetchKind = kind;
+        const fetchPromise = (async (): Promise<CachedMedia> => {
+          const delivery = fetchDesc?.delivery === "stream" ? "stream" : "rpc";
+          if (delivery === "stream") {
+            const stream = await ComicService.GetPageStream(fetchIndex);
+            if (!stream?.url || !stream.token) throw new Error("empty page stream");
+            return {
+              mime: fetchDesc?.mime ?? "",
+              kind: fetchKind,
+              url: stream.url,
+              delivery: "stream",
+              streamToken: stream.token,
+              documentKey,
+            };
+          }
+          const payload = await ComicService.GetPage(fetchIndex);
+          if (!payload) throw new Error("empty page payload");
+          const payloadKind = mediaKindForMime(payload.mime);
+          if (!payloadKind) throw new Error(`unsupported media mime: ${payload.mime}`);
+          const bytes = decodePayloadData(payload.data);
+          return {
+            mime: payload.mime,
+            kind: payloadKind,
+            url: URL.createObjectURL(new Blob([bytes], { type: payload.mime })),
+            delivery: "blob",
+            documentKey,
+          };
+        })();
+        docState.fetch = fetchPromise;
+        void fetchPromise.then(
+          (owner) => {
+            const current = pdfDocs.get(documentKey);
+            if (!current || current.fetch !== fetchPromise) {
+              // clearPageCache / superseded fetch: drop orphaned blob or stream token.
+              releasePdfDocResources(owner);
+              return;
+            }
+            current.owner = owner;
+            current.fetch = undefined;
+          },
+          () => {
+            const current = pdfDocs.get(documentKey);
+            if (!current || current.fetch !== fetchPromise) return;
+            current.fetch = undefined;
+            maybeDisposePdfDoc(documentKey);
+          }
+        );
+      }
+
+      const owner = docState.owner ?? (docState.fetch ? await docState.fetch : undefined);
+      // clearPageCache may have wiped state mid-await; do not resurrect released resources.
+      const currentState = pdfDocs.get(documentKey);
+      if (!currentState) return undefined;
+      docState = currentState;
+      const resolvedOwner = docState.owner ?? owner;
+      if (!resolvedOwner) throw new Error("pdf document load failed");
+
+      if (!stillWanted(index, comic)) {
+        return undefined;
+      }
+
+      const media: CachedMedia = {
+        mime: resolvedOwner.mime,
+        kind: "pdf",
+        url: resolvedOwner.url,
+        delivery: resolvedOwner.delivery,
+        documentPage,
+        documentKey,
+      };
+      const previous = pageCache.get(index);
+      if (previous) {
+        if (previous.url !== media.url) revokeCached(previous);
+        else if (previous.kind === "pdf" && previous.documentKey === documentKey) {
+          // Replacing same-doc entry: drop the old pageRef before re-retain.
+          docState.pageRefs = Math.max(0, docState.pageRefs - 1);
+        }
+      }
+      pageCache.set(index, media);
+      docState.pageRefs += 1;
+      pageLoadErrors.delete(index);
+      return media;
+    } finally {
+      const current = pdfDocs.get(documentKey);
+      if (current) {
+        current.waiters = Math.max(0, current.waiters - 1);
+        maybeDisposePdfDoc(documentKey);
+      }
+    }
+  }
+
   const delivery = desc?.delivery === "stream" ? "stream" : "rpc";
   let media: CachedMedia;
 
   if (delivery === "stream") {
     const stream = await ComicService.GetPageStream(index);
     if (!stream?.url || !stream.token) throw new Error("empty page stream");
-    const kind = mediaKindForMime(desc?.mime ?? "");
-    if (!kind) throw new Error(`unsupported media mime: ${desc?.mime ?? ""}`);
     media = {
       mime: desc?.mime ?? "",
       kind,
       url: stream.url,
       delivery: "stream",
       streamToken: stream.token,
+      documentPage,
+      documentKey,
     };
   } else {
     const payload = await ComicService.GetPage(index);
     if (!payload) throw new Error("empty page payload");
-    const kind = mediaKindForMime(payload.mime);
-    if (!kind) throw new Error(`unsupported media mime: ${payload.mime}`);
+    const payloadKind = mediaKindForMime(payload.mime);
+    if (!payloadKind) throw new Error(`unsupported media mime: ${payload.mime}`);
     const bytes = decodePayloadData(payload.data);
     media = {
       mime: payload.mime,
-      kind,
+      kind: payloadKind,
       url: URL.createObjectURL(new Blob([bytes], { type: payload.mime })),
       delivery: "blob",
+      documentPage,
+      documentKey,
     };
   }
 
