@@ -1,16 +1,18 @@
 # Komika
 
-CBZ/ZIP、CBR/RAR、CB7/7z アーカイブと画像/動画フォルダ向けのローカル優先コミックリーダーです。[Wails v3](https://v3.wails.io/)（Go バックエンド + TypeScript フロントエンド）で構築されています。
+CBZ/ZIP、CBR/RAR、CB7/7z アーカイブ、画像/動画/音声フォルダ、および単独の PDF / Markdown 向けのローカル優先コミックリーダーです。[Wails v3](https://v3.wails.io/)（Go バックエンド + TypeScript フロントエンド）で構築されています。
 
 **言語:** [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
 ## 機能
 
 ### 閲覧
-- **CBZ/ZIP**、**CBR/RAR**、**CB7/7z** アーカイブ、メディアフォルダ、または単一の画像/GIF/動画を開く
-- 自然順のページ並び: 画像（PNG、JPEG、WebP、GIF）と再生可能な動画（WebM、MP4、MOV）
+- **CBZ/ZIP**、**CBR/RAR**、**CB7/7z** アーカイブ、メディアフォルダ、または単一の画像/GIF/動画/音声/**PDF**/**Markdown** を開く
+- 自然順のページ並び: 画像（PNG、JPEG、WebP、GIF）、再生可能な動画（WebM、MP4、MOV）、音声（MP3、M4A、AAC、OGG、Opus、WAV）、複数ページ **PDF**、**Markdown**（`.md` / `.markdown`）
 - ファイル/フォルダを 1 つドラッグ＆ドロップして開く
 - **32 MiB** 以下のページはメモリ RPC、それより大きいメディアは same-origin ストリーミング。アーカイブ内メンバーはシーク用に一時展開し、エントリ単位・開いている作品の合計一時キャッシュとも **2 GiB** 制限。開いたソースを削除/移動するとストリームは利用不可。
+- **PDF**: 各ページがリーダーページ（pdf.js キャンバス）；複数エントリソース内の読めない PDF はスキップ
+- **Markdown**: Merak（`merak-protocol-design-system/markdown`）でスクロール可能な記事ページとして描画
 - BandiView 風の表示モード:
   - ウィンドウに合わせる / 幅に合わせる / 高さに合わせる / 原寸 100%
   - 見開き **LTR** / **RTL**
@@ -19,7 +21,7 @@ CBZ/ZIP、CBR/RAR、CB7/7z アーカイブと画像/動画フォルダ向けの�
 - 画像スケーリング: **Smooth**（既定）、**高品質**（ズーム/パン安定後に表示領域を Lanczos）、または **Pixelated**（静止画）；GIF は高品質を無視してアニメーションを維持。
 - 手動ズーム（25–800%、ウェブトゥーンは最大 200%）とパン（ホイール / はみ出し時 Alt+ドラッグ）
 - リーダーのタイトル/ツールバー余白をダブルクリックしてウィンドウ最大化/復元
-- リーダーツールバーを折りたたむ（ボタンまたは `T`）；上部の細いストリップで復元；`localStorage` に記憶
+- リーダーツールバーを折りたたむ（フローティングトグルまたは `T`）；`localStorage` に記憶
 - 移動・モード切替のキーボードショートカット
 - 作品ごとの続きから再開
 
@@ -102,7 +104,7 @@ wails3 task test
 
 バインディングと本番フロントバンドルは `wails3 task build` の過程で再生成されます。
 
-`testdata/reader-fixture/` と `testdata/media-fixture/` は静止画、アニメ GIF、短い WebM/MP4/MOV サンプルをフォルダ・CBZ・7z・CBR ソースとして提供します。単独メディアファイルは 1 ページの **Media** ソースとして開きます。動画再生はホスト WebView のコーデックスタック（例: H.264/AAC、VP9/Vorbis）に依存し、非対応コーデックはリーダー内のエラーカードを表示します。暗号化・マルチボリュームアーカイブは未対応です。複数ファイルのドロップはトーストで拒否されます。
+`testdata/reader-fixture/` と `testdata/media-fixture/` は静止画、アニメ GIF、短い WebM/MP4/MOV サンプルをフォルダ・CBZ・7z・CBR ソースとして提供します。`testdata/docs-fixture/` にはサンプル PDF と Markdown があります。単独メディア/ドキュメントファイルは 1 ページ（または複数ページ PDF）の **Media** ソースとして開きます。動画/音声再生はホスト WebView のコーデックスタック（例: H.264/AAC、VP9/Vorbis）に依存し、非対応コーデックはリーダー内のエラーカードを表示します。暗号化・マルチボリュームアーカイブは未対応です。複数ファイルのドロップはトーストで拒否されます。
 
 ## プロジェクト構成
 
@@ -110,10 +112,13 @@ wails3 task test
 |------|------|
 | `main.go` | アプリエントリ |
 | `comic_service.go` | Wails ブリッジ（オープン、ページ、ライブラリ） |
-| `comic_source.go` | アーカイブ/フォルダのページソース |
+| `comic_source.go` | アーカイブ/フォルダ/メディア/ドキュメントのページソース |
+| `media_stream.go` | same-origin メディアストリーミングと一時展開上限 |
 | `library_store.go` | 最近リスト、設定、TTL、原子的 JSON |
 | `frontend/src/main.ts` | ライブラリ UI + モード別リーダー |
-| `frontend/src/viewer.ts` | 純ビュー演算（スケール、パン、見開き、キャッシュ） |
+| `frontend/src/viewer.ts` | 純ビュー演算（スケール、パン、見開き、キャッシュ、メディア種別） |
+| `frontend/src/pdf_render.ts` | pdf.js ドキュメントキャッシュとページキャンバス接続 |
+| `frontend/src/upscale.ts` | High quality モード用 Lanczos-3 ビューポートタイルアップスケール |
 | `frontend/src/style.css` | リーダー/ライブラリ用スタイル（Merak トークン） |
 | `frontend/bindings/` | 生成された Wails TypeScript バインディング |
 | `testdata/` | リーダー用フィクスチャ |

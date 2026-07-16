@@ -1,15 +1,17 @@
 # Komika
 
-Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives and image/video folders. Built with [Wails v3](https://v3.wails.io/) (Go backend + TypeScript frontend).
+Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives, image/video/audio folders, and standalone PDF or Markdown. Built with [Wails v3](https://v3.wails.io/) (Go backend + TypeScript frontend).
 
 **Languages:** [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
 ## Features
 
-- Open **CBZ/ZIP**, **CBR/RAR**, **CB7/7z** archives, media folders, or a single image/GIF/video
-- Natural page order for images (PNG, JPEG, WebP, GIF) and playable video (WebM, MP4, MOV)
+- Open **CBZ/ZIP**, **CBR/RAR**, **CB7/7z** archives, media folders, or a single image/GIF/video/audio/**PDF**/**Markdown** file
+- Natural page order for images (PNG, JPEG, WebP, GIF), playable video (WebM, MP4, MOV), audio (MP3, M4A, AAC, OGG, Opus, WAV), multi-page **PDF**, and **Markdown** (`.md` / `.markdown`)
 - Drag-and-drop one file or folder onto the window to open
 - Pages up to **32 MiB** use in-memory RPC; larger media uses same-origin streaming. Archive members are temporarily extracted for seeking with both **2 GiB** per-entry and active-comic aggregate temp-cache limits. Deleting or moving an opened source makes its stream unavailable.
+- **PDF**: each page is a reader page (pdf.js canvas); unreadable PDFs inside multi-entry sources are skipped
+- **Markdown**: rendered with Merak (`merak-protocol-design-system/markdown`) as a scrollable article page
 - View modes inspired by BandiView-style reading:
   - Fit window / fit width / fit height / original 100%
   - Double page **LTR** / **RTL**
@@ -101,7 +103,7 @@ wails3 task test
 
 Bindings and the production frontend bundle are regenerated as part of `wails3 task build`.
 
-Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover still images, animated GIF, and short WebM/MP4/MOV samples as folder, CBZ, 7z, and CBR sources. Standalone media files open as one-page **Media** sources. Video playback depends on the host WebView codec stack (for example H.264/AAC and VP9/Vorbis); unsupported codecs show an in-reader error card. Encrypted and multi-volume archives are not supported. Dropping multiple files is rejected with a toast.
+Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover still images, animated GIF, and short WebM/MP4/MOV samples as folder, CBZ, 7z, and CBR sources. `testdata/docs-fixture/` holds sample PDF and Markdown. Standalone media/document files open as one-page (or multi-page PDF) **Media** sources. Video/audio playback depends on the host WebView codec stack (for example H.264/AAC and VP9/Vorbis); unsupported codecs show an in-reader error card. Encrypted and multi-volume archives are not supported. Dropping multiple files is rejected with a toast.
 
 ## Project layout
 
@@ -109,10 +111,13 @@ Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover st
 |------|------|
 | `main.go` | App entry |
 | `comic_service.go` | Wails bridge (open, pages, library) |
-| `comic_source.go` | Archive/folder/media page sources |
+| `comic_source.go` | Archive/folder/media/document page sources |
+| `media_stream.go` | Same-origin media streaming and temp extraction limits |
 | `library_store.go` | Recent list, settings, TTL, atomic JSON |
 | `frontend/src/main.ts` | Library UI + mode-aware reader |
-| `frontend/src/viewer.ts` | Pure view math (scale, pan, spreads, cache) |
+| `frontend/src/viewer.ts` | Pure view math (scale, pan, spreads, cache, media kinds) |
+| `frontend/src/pdf_render.ts` | pdf.js document cache and per-page canvas attach |
+| `frontend/src/upscale.ts` | Lanczos-3 viewport tile upscale for High quality mode |
 | `frontend/src/style.css` | Reader/library styles (Merak tokens) |
 | `frontend/bindings/` | Generated Wails TypeScript bindings |
 | `testdata/` | Reader fixtures |

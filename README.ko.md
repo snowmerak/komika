@@ -1,16 +1,18 @@
 # Komika
 
-CBZ/ZIP, CBR/RAR, CB7/7z 아카이브와 이미지/동영상 폴더를 읽는 로컬 우선 만화 뷰어입니다. [Wails v3](https://v3.wails.io/) (Go 백엔드 + TypeScript 프론트엔드)로 구성됩니다.
+CBZ/ZIP, CBR/RAR, CB7/7z 아카이브, 이미지/동영상/오디오 폴더, 단독 PDF·Markdown을 읽는 로컬 우선 만화 뷰어입니다. [Wails v3](https://v3.wails.io/) (Go 백엔드 + TypeScript 프론트엔드)로 구성됩니다.
 
 **언어:** [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
 ## 기능
 
 ### 읽기
-- **CBZ/ZIP**, **CBR/RAR**, **CB7/7z** 아카이브, 미디어 폴더, 또는 단일 이미지/GIF/동영상 열기
-- 자연 정렬 페이지 순서: 이미지(PNG, JPEG, WebP, GIF) 및 재생 가능한 동영상(WebM, MP4, MOV)
+- **CBZ/ZIP**, **CBR/RAR**, **CB7/7z** 아카이브, 미디어 폴더, 또는 단일 이미지/GIF/동영상/오디오/**PDF**/**Markdown** 열기
+- 자연 정렬 페이지 순서: 이미지(PNG, JPEG, WebP, GIF), 재생 가능한 동영상(WebM, MP4, MOV), 오디오(MP3, M4A, AAC, OGG, Opus, WAV), 다중 페이지 **PDF**, **Markdown**(`.md` / `.markdown`)
 - 파일/폴더 하나 드래그 앤 드롭으로 열기
 - **32 MiB** 이하 페이지는 메모리 RPC, 더 큰 미디어는 same-origin 스트리밍. 아카이브 멤버는 시크를 위해 임시 추출되며 항목당·활성 작품 합산 임시 캐시 모두 **2 GiB** 제한. 연 소스를 삭제/이동하면 스트림을 사용할 수 없음.
+- **PDF**: 각 페이지가 리더 페이지(pdf.js 캔버스); 다중 엔트리 소스 안 읽을 수 없는 PDF는 건너뜀
+- **Markdown**: Merak(`merak-protocol-design-system/markdown`)로 스크롤 가능한 아티클 페이지 렌더
 - BandiView 스타일 보기 모드:
   - 창에 맞춤 / 너비 맞춤 / 높이 맞춤 / 원본 100%
   - 양면 **LTR** / **RTL**
@@ -102,7 +104,7 @@ wails3 task test
 
 바인딩과 프로덕션 프론트 번들은 `wails3 task build` 과정에서 재생성됩니다.
 
-`testdata/reader-fixture/`와 `testdata/media-fixture/`는 정지 이미지, 애니메이션 GIF, 짧은 WebM/MP4/MOV 샘플을 폴더·CBZ·7z·CBR 소스로 제공합니다. 단독 미디어 파일은 1페이지 **Media** 소스로 열립니다. 동영상 재생은 호스트 WebView 코덱 스택(예: H.264/AAC, VP9/Vorbis)에 의존하며, 미지원 코덱은 리더 내 오류 카드를 표시합니다. 암호화·멀티볼륨 아카이브는 지원하지 않습니다. 여러 파일을 드롭하면 토스트로 거부됩니다.
+`testdata/reader-fixture/`와 `testdata/media-fixture/`는 정지 이미지, 애니메이션 GIF, 짧은 WebM/MP4/MOV 샘플을 폴더·CBZ·7z·CBR 소스로 제공합니다. `testdata/docs-fixture/`에는 샘플 PDF와 Markdown이 있습니다. 단독 미디어/문서 파일은 1페이지(또는 다중 페이지 PDF) **Media** 소스로 열립니다. 동영상/오디오 재생은 호스트 WebView 코덱 스택(예: H.264/AAC, VP9/Vorbis)에 의존하며, 미지원 코덱은 리더 내 오류 카드를 표시합니다. 암호화·멀티볼륨 아카이브는 지원하지 않습니다. 여러 파일을 드롭하면 토스트로 거부됩니다.
 
 ## 프로젝트 구조
 
@@ -110,10 +112,13 @@ wails3 task test
 |------|------|
 | `main.go` | 앱 진입점 |
 | `comic_service.go` | Wails 브리지 (열기, 페이지, 라이브러리) |
-| `comic_source.go` | 아카이브/폴더 페이지 소스 |
+| `comic_source.go` | 아카이브/폴더/미디어/문서 페이지 소스 |
+| `media_stream.go` | same-origin 미디어 스트리밍 및 임시 추출 한도 |
 | `library_store.go` | 최근 목록, 설정, TTL, 원자적 JSON |
 | `frontend/src/main.ts` | 라이브러리 UI + 모드별 리더 |
-| `frontend/src/viewer.ts` | 순수 뷰 연산 (스케일, 팬, 스프레드, 캐시) |
+| `frontend/src/viewer.ts` | 순수 뷰 연산 (스케일, 팬, 스프레드, 캐시, 미디어 종류) |
+| `frontend/src/pdf_render.ts` | pdf.js 문서 캐시 및 페이지 캔버스 부착 |
+| `frontend/src/upscale.ts` | High quality 모드용 Lanczos-3 뷰포트 타일 업스케일 |
 | `frontend/src/style.css` | 리더/라이브러리 스타일 (Merak 토큰) |
 | `frontend/bindings/` | 생성된 Wails TypeScript 바인딩 |
 | `testdata/` | 리더 픽스처 |
