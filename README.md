@@ -18,7 +18,7 @@ Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives and image/video f
 - Image scaling: **Smooth** (default), **High quality** (Lanczos on the visible viewport after zoom/pan settles), or **Pixelated** for stills; GIFs ignore High quality and stay animated.
 - Manual zoom (25–800%, webtoon up to 200%) and pan (wheel / Alt+drag when content overflows)
 - Double-click the reader title/toolbar chrome to maximize or restore the window
-- Collapse the reader toolbar (button or `T`); thin top strip restores it; remembered in `localStorage`
+- Collapse the reader toolbar (floating toggle or `T`); remembered in `localStorage`
 - Keyboard shortcuts for navigation and mode switching
 - Per-work resume progress
 

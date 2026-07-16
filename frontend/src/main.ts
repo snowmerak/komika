@@ -164,11 +164,11 @@ function setToolbarCollapsed(collapsed: boolean): void {
   if (!(reader instanceof HTMLElement)) return;
 
   reader.classList.toggle("reader--toolbar-collapsed", collapsed);
-  const expanded = String(!collapsed);
-  const toggle = reader.querySelector(".reader__toolbar-toggle");
-  const revealBtn = reader.querySelector(".reader__toolbar-reveal-btn");
-  if (toggle instanceof HTMLElement) toggle.setAttribute("aria-expanded", expanded);
-  if (revealBtn instanceof HTMLElement) revealBtn.setAttribute("aria-expanded", expanded);
+  const toggle = reader.querySelector(".reader__toolbar-float");
+  if (toggle instanceof HTMLElement) {
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute("aria-label", collapsed ? "Expand toolbar" : "Collapse toolbar");
+  }
 }
 
 function errMessage(err: unknown): string {
@@ -1738,16 +1738,6 @@ function renderReader(): HTMLElement {
   bar.style.width = `${comic.pageCount <= 1 ? 100 : ((activeForProgress + 1) / comic.pageCount) * 100}%`;
   progress.append(bar);
 
-  const collapseBtn = makeButton(
-    "",
-    "mp-button--secondary mp-button--icon",
-    () => setToolbarCollapsed(true),
-    { iconOnly: true, aria: "Collapse toolbar" }
-  );
-  collapseBtn.append(svgIcon('<polyline points="18 15 12 9 6 15"/>'));
-  collapseBtn.setAttribute("aria-expanded", "true");
-  collapseBtn.classList.add("reader__toolbar-toggle");
-
   controls.append(
     prev,
     pageForm,
@@ -1759,8 +1749,7 @@ function renderReader(): HTMLElement {
     zoomReset,
     zoomIn,
     dirBtn,
-    progress,
-    collapseBtn
+    progress
   );
   toolbar.append(back, title, controls);
   toolbar.addEventListener("dblclick", (e) => {
@@ -1768,32 +1757,27 @@ function renderReader(): HTMLElement {
     void WailsWindow.ToggleMaximise();
   });
 
-  const reveal = document.createElement("div");
-  reveal.className = "reader__toolbar-reveal";
-  const revealBtn = makeButton(
+  const floatToggle = makeButton(
     "",
-    "mp-button--secondary mp-button--icon reader__toolbar-reveal-btn",
-    () => setToolbarCollapsed(false),
-    { iconOnly: true, aria: "Expand toolbar" }
+    "mp-button--secondary mp-button--icon reader__toolbar-float",
+    () => setToolbarCollapsed(!state.toolbarCollapsed),
+    {
+      iconOnly: true,
+      aria: state.toolbarCollapsed ? "Expand toolbar" : "Collapse toolbar",
+    }
   );
-  revealBtn.append(svgIcon('<polyline points="6 9 12 15 18 9"/>'));
-  revealBtn.setAttribute("aria-expanded", "false");
-  reveal.append(revealBtn);
-  // Whole thin strip expands the toolbar (button is only 4px tall).
-  reveal.addEventListener("click", (e) => {
-    if (e.target === revealBtn || revealBtn.contains(e.target as Node)) return;
-    setToolbarCollapsed(false);
-  });
-  reveal.addEventListener("dblclick", (e) => {
-    if (isInteractiveToolbarTarget(e.target)) return;
-    void WailsWindow.ToggleMaximise();
-  });
+  floatToggle.setAttribute("aria-expanded", String(!state.toolbarCollapsed));
+  const collapseIcon = svgIcon('<polyline points="18 15 12 9 6 15"/>');
+  collapseIcon.classList.add("reader__toolbar-float-icon", "reader__toolbar-float-icon--collapse");
+  const expandIcon = svgIcon('<polyline points="6 9 12 15 18 9"/>');
+  expandIcon.classList.add("reader__toolbar-float-icon", "reader__toolbar-float-icon--expand");
+  floatToggle.append(collapseIcon, expandIcon);
 
   const stage = document.createElement("div");
   stage.className = "reader__stage";
   if (mode === "webtoon") stage.classList.add("reader__stage--webtoon");
 
-  view.append(toolbar, reveal, stage);
+  view.append(toolbar, stage, floatToggle);
 
   const generation = renderGeneration;
   if (mode === "webtoon") {
