@@ -18,7 +18,7 @@ CBZ/ZIP、CBR/RAR、CB7/7z アーカイブ、画像/動画/音声フォルダ、
   - 見開き **LTR** / **RTL**
   - 連続 **ウェブトゥーン** ストリップ
 - 小さい画像の引き伸ばし（フィット系モードのみ）
-- 画像スケーリング: **Smooth**（既定）、**高品質**（ズーム/パン安定後に表示領域を Lanczos）、または **Pixelated**（静止画）；GIF は高品質を無視してアニメーションを維持。
+- 画像スケーリング: **Smooth**（既定）、**高品質**（Lanczos-3）、**NoHalo**、**xBRZ**（ズーム/パン安定後の表示タイル）；**Pixelated**（静止画）；GIF はキャンバスフィルタを無視してアニメーションを維持。
 - 手動ズーム（25–800%、ウェブトゥーンは最大 200%）とパン（ホイール / はみ出し時 Alt+ドラッグ）
 - リーダーのタイトル/ツールバー余白をダブルクリックしてウィンドウ最大化/復元
 - リーダーツールバーを折りたたむ（フローティングトグルまたは `T`）；`localStorage` に記憶
@@ -118,7 +118,7 @@ wails3 task test
 | `frontend/src/main.ts` | ライブラリ UI + モード別リーダー |
 | `frontend/src/viewer.ts` | 純ビュー演算（スケール、パン、見開き、キャッシュ、メディア種別） |
 | `frontend/src/pdf_render.ts` | pdf.js ドキュメントキャッシュとページキャンバス接続 |
-| `frontend/src/upscale.ts` | High quality モード用 Lanczos-3 ビューポートタイルアップスケール |
+| `frontend/src/upscale.ts` | ビューポートタイル純フィルタ: Lanczos-3、NoHalo、xBRZ |
 | `frontend/src/style.css` | リーダー/ライブラリ用スタイル（Merak トークン） |
 | `frontend/bindings/` | 生成された Wails TypeScript バインディング |
 | `testdata/` | リーダー用フィクスチャ |

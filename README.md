@@ -17,7 +17,7 @@ Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives, image/video/audi
   - Double page **LTR** / **RTL**
   - Continuous **webtoon** strip
 - Stretch small images (fit modes only)
-- Image scaling: **Smooth** (default), **High quality** (Lanczos on the visible viewport after zoom/pan settles), or **Pixelated** for stills; GIFs ignore High quality and stay animated.
+- Image scaling: **Smooth** (default), **High quality** (Lanczos-3), **NoHalo**, or **xBRZ** on the settled viewport tile after zoom/pan; **Pixelated** for stills; GIFs ignore canvas filters and stay animated.
 - Manual zoom (25–800%, webtoon up to 200%) and pan (wheel / Alt+drag when content overflows)
 - Double-click the reader title/toolbar chrome to maximize or restore the window
 - Collapse the reader toolbar (floating toggle or `T`); remembered in `localStorage`
@@ -117,7 +117,7 @@ Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover st
 | `frontend/src/main.ts` | Library UI + mode-aware reader |
 | `frontend/src/viewer.ts` | Pure view math (scale, pan, spreads, cache, media kinds) |
 | `frontend/src/pdf_render.ts` | pdf.js document cache and per-page canvas attach |
-| `frontend/src/upscale.ts` | Lanczos-3 viewport tile upscale for High quality mode |
+| `frontend/src/upscale.ts` | Viewport-tile pure filters: Lanczos-3, NoHalo, xBRZ |
 | `frontend/src/style.css` | Reader/library styles (Merak tokens) |
 | `frontend/bindings/` | Generated Wails TypeScript bindings |
 | `testdata/` | Reader fixtures |

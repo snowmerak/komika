@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = join(__dirname, "..");
 const srcFile = join(frontendRoot, "src", "viewer.ts");
 const upscaleSrc = join(frontendRoot, "src", "upscale.ts");
+const xbrzSrc = join(frontendRoot, "src", "xbrz.ts");
 const require = createRequire(import.meta.url);
 
 function resolveTsc() {
@@ -27,6 +28,7 @@ try {
   const args = [
     srcFile,
     upscaleSrc,
+    xbrzSrc,
     "--target",
     "ES2020",
     "--module",
@@ -48,6 +50,15 @@ try {
     console.error(result.stdout);
     console.error(result.stderr);
     throw new Error(`tsc failed with status ${result.status}`);
+  }
+  // tsc may emit extensionless relative imports; Node ESM needs the .js suffix.
+  const upscaleJsPath = join(outDir, "upscale.js");
+  if (existsSync(upscaleJsPath)) {
+    const js = readFileSync(upscaleJsPath, "utf8");
+    writeFileSync(
+      upscaleJsPath,
+      js.replace(/from\s+["']\.\/xbrz["']/g, 'from "./xbrz.js"')
+    );
   }
   const outFile = join(outDir, "viewer.js");
   if (!existsSync(outFile)) {
@@ -99,6 +110,10 @@ try {
     shouldUpscaleHQ,
     clampTileDest,
     lanczosScaleRegion,
+    noHaloScaleRegion,
+    xbrzScale,
+    pickXbrzFactor,
+    scaleRegionForRendering,
     HQ_MAX_TILE_PIXELS,
     HQ_MAX_TILE_SIDE,
   } = upscale;
@@ -366,6 +381,23 @@ try {
     assert.equal(s.getItem(VIEW_PREFERENCES_KEY), JSON.stringify(prefs));
   }
 
+  // noHalo / xbrz imageRendering roundtrip
+  for (const mode of ["noHalo", "xbrz"]) {
+    const s = makeStorage();
+    saveViewPreferences(s, {
+      mode: "fitWindow",
+      stretchSmall: false,
+      imageRendering: mode,
+    });
+    const prefs = loadViewPreferences(s);
+    assert.deepEqual(prefs, {
+      mode: "fitWindow",
+      stretchSmall: false,
+      imageRendering: mode,
+    });
+    assert.equal(s.getItem(VIEW_PREFERENCES_KEY), JSON.stringify(prefs));
+  }
+
   // --- upscale pure ---
   assert.equal(shouldUpscaleHQ(1, 1), false);
   assert.equal(shouldUpscaleHQ(2, 2), true);
@@ -433,6 +465,181 @@ try {
     );
     assert.equal(out.width, 2);
     assert.equal(out.height, 2);
+  }
+
+  // --- NoHalo / xBRZ pure ---
+  {
+    const data = new Uint8ClampedArray(4 * 4 * 4);
+    for (let i = 0; i < 16; i++) {
+      data[i * 4] = 200;
+      data[i * 4 + 1] = 10;
+      data[i * 4 + 2] = 20;
+      data[i * 4 + 3] = 255;
+    }
+    const out = noHaloScaleRegion({ data, width: 4, height: 4 }, { x: 0, y: 0, w: 4, h: 4 }, 8, 8);
+    assert.equal(out.width, 8);
+    assert.equal(out.height, 8);
+  }
+  assert.equal(pickXbrzFactor(1, 1), null);
+  assert.equal(pickXbrzFactor(2, 2), 2);
+  assert.equal(pickXbrzFactor(5.4, 5.4), 5);
+  assert.equal(pickXbrzFactor(9, 9), 6);
+  {
+    const data = new Uint8ClampedArray(2 * 2 * 4);
+    for (let i = 0; i < 4; i++) {
+      data[i * 4] = 40;
+      data[i * 4 + 1] = 50;
+      data[i * 4 + 2] = 60;
+      data[i * 4 + 3] = 255;
+    }
+    const out = xbrzScale({ data, width: 2, height: 2 }, 2);
+    assert.equal(out.width, 4);
+    assert.equal(out.height, 4);
+    assert.equal(out.data.length, 64);
+    // solid fill must stay uniform (no spurious edge blends)
+    for (let i = 0; i < 16; i++) {
+      assert.equal(out.data[i * 4], 40);
+      assert.equal(out.data[i * 4 + 1], 50);
+      assert.equal(out.data[i * 4 + 2], 60);
+    }
+    assert.throws(() => xbrzScale({ data, width: 2, height: 2 }, 7), /factor must be 2\.\.6/);
+  }
+  {
+    // Plan-fixed distance: pure red vs pure blue is large; near-equal greens are < 96.
+    const xbrzOut = join(outDir, "xbrz.js");
+    const xbrzMod = await import(pathToFileURL(xbrzOut).href);
+    const red = { r: 255, g: 0, b: 0, a: 255 };
+    const blue = { r: 0, g: 0, b: 255, a: 255 };
+    const g1 = { r: 10, g: 200, b: 10, a: 255 };
+    const g2 = { r: 12, g: 201, b: 11, a: 255 };
+    assert.ok(xbrzMod.xbrzDist(red, blue) > 96);
+    assert.equal(xbrzMod.xbrzEqual(red, blue), false);
+    assert.equal(xbrzMod.xbrzEqual(g1, g2), true);
+    // dist formula shape: 48*|Δy|+7*|Δu|+6*|Δv|
+    const y1 = 0.299 * 255;
+    const y2 = 0.114 * 255;
+    const u1 = (0 - y1) * 0.565;
+    const u2 = (255 - y2) * 0.565;
+    const v1 = (255 - y1) * 0.713;
+    const v2 = (0 - y2) * 0.713;
+    const expected = 48 * Math.abs(y1 - y2) + 7 * Math.abs(u1 - u2) + 6 * Math.abs(v1 - v2);
+    assert.ok(Math.abs(xbrzMod.xbrzDist(red, blue) - expected) < 1e-6);
+  }
+  {
+    // Thin horizontal black line on white 3×3 — after 2× the black band must
+    // remain contiguous (feature preservation). Axis-aligned hard edges may
+    // stay 0/255; that is acceptable for xBRZ.
+    const W = [255, 255, 255, 255];
+    const K = [0, 0, 0, 255];
+    const px = (row) => row.flatMap((c) => c);
+    const data = new Uint8ClampedArray(
+      px([
+        [...W, ...W, ...W],
+        [...K, ...K, ...K],
+        [...W, ...W, ...W],
+      ])
+    );
+    const out = xbrzScale({ data, width: 3, height: 3 }, 2);
+    assert.equal(out.width, 6);
+    assert.equal(out.height, 6);
+    const at = (x, y) => {
+      const i = (y * 6 + x) * 4;
+      return [out.data[i], out.data[i + 1], out.data[i + 2]];
+    };
+    // Source row y=1 maps to out rows 2–3; both should stay near-black across x.
+    for (const y of [2, 3]) {
+      for (const x of [0, 1, 2, 3, 4, 5]) {
+        const p = at(x, y);
+        assert.ok(
+          p[0] < 40 && p[1] < 40 && p[2] < 40,
+          `thin line broken at (${x},${y}): ${p}`
+        );
+      }
+    }
+    // White rows above/below must stay near-white (no line thickening into them
+    // enough to turn a full white row black).
+    for (const y of [0, 5]) {
+      for (const x of [0, 1, 2, 3, 4, 5]) {
+        const p = at(x, y);
+        assert.ok(
+          p[0] > 200 && p[1] > 200 && p[2] > 200,
+          `line thickened into white at (${x},${y}): ${p}`
+        );
+      }
+    }
+  }
+  {
+    // 3×3 diagonal black line on white. Blends land on white neighbors of the
+    // diagonal (not always on the black centers). Keep black centers black and
+    // require at least one non-binary sample on the white side of an edge.
+    const W = [255, 255, 255, 255];
+    const K = [0, 0, 0, 255];
+    const px = (row) => row.flatMap((c) => c);
+    const data = new Uint8ClampedArray(
+      px([
+        [...K, ...W, ...W],
+        [...W, ...K, ...W],
+        [...W, ...W, ...K],
+      ])
+    );
+    const out = xbrzScale({ data, width: 3, height: 3 }, 2);
+    assert.equal(out.width, 6);
+    assert.equal(out.height, 6);
+    const at = (x, y) => {
+      const i = (y * 6 + x) * 4;
+      return out.data[i];
+    };
+    // Centers of the three black source pixels (each maps to a 2×2 block).
+    assert.equal(at(0, 0), 0, "diag black (0,0) erased");
+    assert.equal(at(2, 2), 0, "diag black (1,1) erased");
+    assert.equal(at(4, 4), 0, "diag black (2,2) erased");
+    // Collect samples around the middle diagonal step (source 1,1 and its
+    // white neighbors' 2× blocks).
+    const samples = [];
+    for (const [x, y] of [
+      // white source (1,0) block → out y 0–1, x 2–3
+      [2, 0],
+      [3, 0],
+      [2, 1],
+      [3, 1],
+      // white source (2,1) block → out y 2–3, x 4–5
+      [4, 2],
+      [5, 2],
+      [4, 3],
+      [5, 3],
+      // white source (0,1) block → out y 2–3, x 0–1
+      [0, 2],
+      [1, 2],
+      [0, 3],
+      [1, 3],
+      // interior of middle black 2×2 (should stay black-ish)
+      [2, 2],
+      [3, 2],
+      [2, 3],
+      [3, 3],
+    ]) {
+      samples.push(at(x, y));
+    }
+    const hasMid = samples.some((r) => r > 0 && r < 255);
+    assert.ok(hasMid, `diagonal 2× matrix should produce edge blends, samples=${samples}`);
+  }
+  {
+    const data = new Uint8ClampedArray(2 * 2 * 4);
+    for (let i = 0; i < 4; i++) {
+      data[i * 4] = 128;
+      data[i * 4 + 1] = 64;
+      data[i * 4 + 2] = 32;
+      data[i * 4 + 3] = 255;
+    }
+    const out = scaleRegionForRendering(
+      "highQuality",
+      { data, width: 2, height: 2 },
+      { x: 0, y: 0, w: 2, h: 2 },
+      4,
+      4
+    );
+    assert.equal(out.width, 4);
+    assert.equal(out.height, 4);
   }
 
   // --- mediaKindForMime ---

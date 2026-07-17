@@ -27,8 +27,10 @@ import {
   clampTileDest,
   drawImageRegion,
   HQ_OVERSCAN_CSS,
-  lanczosScaleRegion,
+  pickXbrzFactor,
+  scaleRegionForRendering,
   shouldUpscaleHQ,
+  type CanvasScaleRendering,
 } from "./upscale";
 import { attachPdfPage, clearPdfDocCache } from "./pdf_render";
 
@@ -487,9 +489,15 @@ function attachMediaElement(
     const rendering = state.viewPreferences.imageRendering;
     const mimeLower = media.mime.toLowerCase();
     const isGif = mimeLower === "image/gif" || mimeLower.startsWith("image/gif");
-    const useHQ = rendering === "highQuality" && !isGif;
+    const CANVAS_SCALE_RENDERINGS: ReadonlySet<ImageRendering> = new Set([
+      "highQuality",
+      "noHalo",
+      "xbrz",
+    ]);
+    const useCanvasScale = CANVAS_SCALE_RENDERINGS.has(rendering) && !isGif;
+    const scaleRendering = rendering as CanvasScaleRendering;
 
-    if (!useHQ) {
+    if (!useCanvasScale) {
       const img = document.createElement("img");
       const pixelated = rendering === "pixelated";
       img.className = `${className} reader__media reader__media--image${
@@ -521,7 +529,7 @@ function attachMediaElement(
       };
     }
 
-    // High quality: viewport tile canvas + off-DOM decode for Lanczos.
+    // Canvas scale filters: viewport tile + settled Lanczos / NoHalo / xBRZ.
     host.classList.add("reader__media-host--hq");
 
     const canvas = document.createElement("canvas");
@@ -672,6 +680,14 @@ function attachMediaElement(
         }
         return;
       }
+      if (scaleRendering === "xbrz" && pickXbrzFactor(scaleX, scaleY) == null) {
+        hqRunning = false;
+        if (hqPending) {
+          hqPending = false;
+          schedulePaintHQ();
+        }
+        return;
+      }
 
       // Ensure canvas positioned/sized (cheap may have done this).
       canvas.style.left = `${tile.cssX}px`;
@@ -688,7 +704,13 @@ function attachMediaElement(
       }
 
       try {
-        const imageData = lanczosScaleRegion(srcPixels, tile.src, tile.destW, tile.destH);
+        const imageData = scaleRegionForRendering(
+          scaleRendering,
+          srcPixels,
+          tile.src,
+          tile.destW,
+          tile.destH
+        );
         ctx.putImageData(imageData, 0, 0);
         canvas.style.visibility = "visible";
       } catch {
@@ -1961,7 +1983,9 @@ function renderReader(): HTMLElement {
   renderSelect.setAttribute("aria-label", "Image scaling");
   for (const opt of [
     { value: "smooth", label: "Smooth" },
-    { value: "highQuality", label: "High quality" },
+    { value: "highQuality", label: "High quality (Lanczos)" },
+    { value: "noHalo", label: "NoHalo" },
+    { value: "xbrz", label: "xBRZ" },
     { value: "pixelated", label: "Pixelated" },
   ] as const) {
     const o = document.createElement("option");

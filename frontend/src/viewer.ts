@@ -7,7 +7,7 @@ export type ViewMode =
   | "doubleRTL"
   | "webtoon";
 
-export type ImageRendering = "smooth" | "pixelated" | "highQuality";
+export type ImageRendering = "smooth" | "pixelated" | "highQuality" | "noHalo" | "xbrz";
 
 export interface ViewPreferences {
   mode: ViewMode;
@@ -38,6 +38,8 @@ const VALID_IMAGE_RENDERINGS: ReadonlySet<ImageRendering> = new Set([
   "smooth",
   "pixelated",
   "highQuality",
+  "noHalo",
+  "xbrz",
 ]);
 
 function isImageRendering(value: unknown): value is ImageRendering {
