@@ -42,6 +42,12 @@ Preferences for view mode/stretch/image scaling and toolbar collapse are stored 
 - [Wails v3](https://v3.wails.io/) CLI (`wails3`)
 - [Task](https://taskfile.dev/) is **not** required separately: use `wails3 task …`, which runs the repo `Taskfile.yml` graph
 
+## Supported platforms
+
+- Windows (amd64, arm64)
+- Linux (amd64, arm64)
+- macOS Apple Silicon (arm64)
+
 ## Task workflow
 
 Komika is driven through the root Taskfile. Prefer these entry points over ad-hoc `go`/`npm`/`wails3` one-offs.

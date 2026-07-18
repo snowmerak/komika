@@ -43,6 +43,12 @@ CBZ/ZIP、CBR/RAR、CB7/7z アーカイブ、画像/動画/音声フォルダ、
 - [Wails v3](https://v3.wails.io/) CLI（`wails3`）
 - [Task](https://taskfile.dev/) は別途不要。`wails3 task …` でルート `Taskfile.yml` グラフを実行
 
+## 対応プラットフォーム
+
+- Windows (amd64, arm64)
+- Linux (amd64, arm64)
+- macOS Apple Silicon (arm64)
+
 ## Task ワークフロー
 
 Komika はルート Taskfile 経由で動かします。単発の `go` / `npm` / `wails3` より次のエントリポイントを優先してください。

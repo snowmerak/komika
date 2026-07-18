@@ -43,6 +43,12 @@ CBZ/ZIP, CBR/RAR, CB7/7z 아카이브, 이미지/동영상/오디오 폴더, 단
 - [Wails v3](https://v3.wails.io/) CLI (`wails3`)
 - [Task](https://taskfile.dev/)는 별도 설치 없이 `wails3 task …`로 루트 `Taskfile.yml` 그래프를 실행
 
+## 지원 플랫폼
+
+- Windows (amd64, arm64)
+- Linux (amd64, arm64)
+- macOS Apple Silicon (arm64)
+
 ## Task 워크플로
 
 Komika는 루트 Taskfile을 통해 구동합니다. 단발성 `go`/`npm`/`wails3` 명령보다 아래 엔트리 포인트를 우선하세요.

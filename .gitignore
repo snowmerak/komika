@@ -10,3 +10,4 @@ build/ios/xcode/gen/
 build/android/overlay.json
 build/android/gen/
 build/android/.gradle/9.2.1/fileHashes
+build/linux/appimage/komika
