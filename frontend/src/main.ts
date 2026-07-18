@@ -1,7 +1,7 @@
 import "merak-protocol-design-system/style.css";
 import "./style.css";
 import { ComicService } from "../bindings/komika";
-import type { Comic, LibrarySettings, LibraryState, RecentComic } from "../bindings/komika";
+import type { Comic, DesktopIntegrationStatus, LibrarySettings, LibraryState, RecentComic } from "../bindings/komika";
 import { Events, Window as WailsWindow } from "@wailsio/runtime";
 import { renderMerakMarkdown } from "merak-protocol-design-system/markdown";
 import {
@@ -52,6 +52,7 @@ interface AppState {
   selectedRecentPaths: Set<string>;
   pendingHistoryAction: HistoryAction | null;
   toolbarCollapsed: boolean;
+  desktopIntegration: DesktopIntegrationStatus | null;
 }
 
 const DIRECTION_KEY = "komika.readingDirection";
@@ -82,6 +83,7 @@ const state: AppState = {
   historySettingsOpen: false,
   selectedRecentPaths: new Set(),
   pendingHistoryAction: null,
+  desktopIntegration: null,
   toolbarCollapsed: (() => {
     try {
       return localStorage.getItem(TOOLBAR_COLLAPSED_KEY) === "1";
@@ -1482,6 +1484,9 @@ function renderLibrary(): HTMLElement {
       () => {
         state.historySettingsOpen = !state.historySettingsOpen;
         state.pendingHistoryAction = null;
+        if (state.historySettingsOpen) {
+          void refreshDesktopIntegration().then(() => render());
+        }
         render();
       }
     )
@@ -1491,6 +1496,8 @@ function renderLibrary(): HTMLElement {
 
   if (state.historySettingsOpen) {
     view.append(renderHistorySettings());
+    const desktopCard = renderDesktopIntegration();
+    if (desktopCard) view.append(desktopCard);
   }
 
   const settings = librarySettings();
@@ -1662,6 +1669,106 @@ function renderHistorySettings(): HTMLElement {
   card.append(body);
   return card;
 }
+
+function renderDesktopIntegration(): HTMLElement | null {
+  const status = state.desktopIntegration;
+  if (!status?.supported) return null;
+
+  const card = document.createElement("article");
+  card.className = "mp-card history-settings desktop-integration";
+
+  const header = document.createElement("div");
+  header.className = "mp-card__header";
+  const title = document.createElement("div");
+  title.className = "mp-card__title";
+  title.textContent = "File manager integration";
+  header.append(title);
+  card.append(header);
+
+  const body = document.createElement("div");
+  body.className = "history-settings__body";
+
+  const desc = document.createElement("p");
+  desc.className = "desktop-integration__text";
+  if (status.installed) {
+    desc.textContent =
+      "Komika is registered as an Open With candidate for comic archives, ZIP/RAR/7z, PDF, Markdown, and common media.";
+  } else {
+    desc.textContent =
+      "Register Komika in the file manager for comic archives, ZIP/RAR/7z, PDF, Markdown, and common media (AppImage/binary). Adds Open With candidates; does not force default apps.";
+  }
+  body.append(desc);
+
+  if (status.installed && status.execPath) {
+    const exec = document.createElement("p");
+    exec.className = "desktop-integration__meta";
+    exec.textContent = `Executable: ${status.execPath}`;
+    body.append(exec);
+  }
+
+  if (status.detail) {
+    const detail = document.createElement("p");
+    detail.className = "desktop-integration__detail";
+    detail.textContent = status.detail;
+    body.append(detail);
+  }
+
+  const row = document.createElement("div");
+  row.className = "mp-button-row";
+  if (status.installed) {
+    row.append(
+      makeButton("Re-register", "mp-button--secondary mp-button--sm", () => {
+        void handleInstallDesktopIntegration();
+      }),
+      makeButton("Remove", "mp-button--ghost mp-button--sm", () => {
+        void handleRemoveDesktopIntegration();
+      })
+    );
+  } else {
+    row.append(
+      makeButton("Register", "mp-button--primary mp-button--sm", () => {
+        void handleInstallDesktopIntegration();
+      })
+    );
+  }
+  body.append(row);
+  card.append(body);
+  return card;
+}
+
+async function refreshDesktopIntegration(): Promise<void> {
+  try {
+    state.desktopIntegration = await ComicService.GetDesktopIntegration();
+  } catch {
+    state.desktopIntegration = null;
+  }
+}
+
+async function handleInstallDesktopIntegration(): Promise<void> {
+  try {
+    state.desktopIntegration = await ComicService.InstallDesktopIntegration();
+    showToast(
+      state.desktopIntegration.installed ? "File manager integration registered" : "Registration incomplete",
+      state.desktopIntegration.installed ? "success" : "info"
+    );
+  } catch (err) {
+    showToast(errMessage(err));
+  } finally {
+    render();
+  }
+}
+
+async function handleRemoveDesktopIntegration(): Promise<void> {
+  try {
+    state.desktopIntegration = await ComicService.RemoveDesktopIntegration();
+    showToast("File manager integration removed", "success");
+  } catch (err) {
+    showToast(errMessage(err));
+  } finally {
+    render();
+  }
+}
+
 
 function renderHistoryConfirm(action: HistoryAction): HTMLElement {
   const box = document.createElement("div");
@@ -3116,6 +3223,9 @@ async function boot(): Promise<void> {
     void handleOpenPath(files[0]);
   });
   await refreshLibrary();
+  void refreshDesktopIntegration();
+  const pending = await ComicService.ConsumePendingOpenPath();
+  if (pending) void handleOpenPath(pending);
   render();
 }
 

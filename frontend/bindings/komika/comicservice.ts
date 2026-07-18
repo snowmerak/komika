@@ -22,6 +22,21 @@ export function ClearRecents(): $CancellablePromise<$models.LibraryState | null>
 }
 
 /**
+ * ConsumePendingOpenPath returns and clears a path queued by OS open-with / second instance.
+ * Empty string means none.
+ */
+export function ConsumePendingOpenPath(): $CancellablePromise<string> {
+    return $Call.ByID(3490912234);
+}
+
+/**
+ * GetDesktopIntegration reports Linux XDG open-with registration status.
+ */
+export function GetDesktopIntegration(): $CancellablePromise<$models.DesktopIntegrationStatus> {
+    return $Call.ByID(1108051258);
+}
+
+/**
  * GetLibrary returns the current recents list.
  */
 export function GetLibrary(): $CancellablePromise<$models.LibraryState | null> {
@@ -40,6 +55,13 @@ export function GetPage(index: number): $CancellablePromise<$models.PagePayload 
  */
 export function GetPageStream(index: number): $CancellablePromise<$models.PageStream | null> {
     return $Call.ByID(2657797635, index);
+}
+
+/**
+ * InstallDesktopIntegration registers user-level .desktop + comic MIME entries on Linux.
+ */
+export function InstallDesktopIntegration(): $CancellablePromise<$models.DesktopIntegrationStatus> {
+    return $Call.ByID(301888413);
 }
 
 /**
@@ -83,6 +105,13 @@ export function OpenRecent(path: string): $CancellablePromise<$models.Comic | nu
  */
 export function ReleasePageStream(token: string): $CancellablePromise<void> {
     return $Call.ByID(1597265506, token);
+}
+
+/**
+ * RemoveDesktopIntegration removes user-level desktop integration files on Linux.
+ */
+export function RemoveDesktopIntegration(): $CancellablePromise<$models.DesktopIntegrationStatus> {
+    return $Call.ByID(98301510);
 }
 
 /**

@@ -21,6 +21,18 @@ export interface Comic {
 }
 
 /**
+ * DesktopIntegrationStatus describes Linux XDG open-with registration state.
+ */
+export interface DesktopIntegrationStatus {
+    "supported": boolean;
+    "installed": boolean;
+    "desktopPath"?: string;
+    "mimePath"?: string;
+    "execPath"?: string;
+    "detail"?: string;
+}
+
+/**
  * LibrarySettings controls recent retention and privacy.
  */
 export interface LibrarySettings {

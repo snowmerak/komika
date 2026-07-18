@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -18,8 +19,9 @@ func main() {
 	}
 
 	app := application.New(application.Options{
-		Name:        "Komika",
-		Description: "Cross-platform manga viewer",
+		Name:             "Komika",
+		Description:      "Cross-platform manga viewer",
+		FileAssociations: associatedFileExts,
 		Services: []application.Service{
 			application.NewService(comicService),
 		},
@@ -30,6 +32,22 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.komika.app",
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				if p := firstAssociatedPath(data.Args, data.WorkingDir); p != "" {
+					requestOpenPath(p)
+				}
+				if mainWindow != nil {
+					mainWindow.Restore()
+					mainWindow.Focus()
+				}
+			},
+		},
+	})
+
+	app.Event.OnApplicationEvent(events.Common.ApplicationOpenedWithFile, func(e *application.ApplicationEvent) {
+		requestOpenPath(e.Context().Filename())
 	})
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
@@ -47,6 +65,7 @@ func main() {
 		BackgroundColour: application.NewRGB(26, 29, 33),
 		URL:              "/",
 	})
+	mainWindow = win
 
 	win.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {
 		files := event.Context().DroppedFiles()
@@ -56,6 +75,11 @@ func main() {
 			"details": details,
 		})
 	})
+
+	// Fallback for platforms where argv open does not emit ApplicationOpenedWithFile.
+	if p := firstAssociatedPath(os.Args, ""); p != "" {
+		requestOpenPath(p)
+	}
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

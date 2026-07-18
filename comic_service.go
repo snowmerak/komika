@@ -115,6 +115,27 @@ func (s *ComicService) OpenPath(path string) (*Comic, error) {
 	return s.openPath(path, false)
 }
 
+// ConsumePendingOpenPath returns and clears a path queued by OS open-with / second instance.
+// Empty string means none.
+func (s *ComicService) ConsumePendingOpenPath() string {
+	return consumePendingOpenPath()
+}
+
+// GetDesktopIntegration reports Linux XDG open-with registration status.
+func (s *ComicService) GetDesktopIntegration() (DesktopIntegrationStatus, error) {
+	return getDesktopIntegration()
+}
+
+// InstallDesktopIntegration registers user-level .desktop + comic MIME entries on Linux.
+func (s *ComicService) InstallDesktopIntegration() (DesktopIntegrationStatus, error) {
+	return installDesktopIntegration()
+}
+
+// RemoveDesktopIntegration removes user-level desktop integration files on Linux.
+func (s *ComicService) RemoveDesktopIntegration() (DesktopIntegrationStatus, error) {
+	return removeDesktopIntegration()
+}
+
 // OpenRecent reopens a library path, removing it if the file is gone.
 func (s *ComicService) OpenRecent(path string) (*Comic, error) {
 	if path == "" {

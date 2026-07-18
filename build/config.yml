@@ -8,7 +8,7 @@ info:
   companyName: "Komika" # The name of the company
   productName: "Komika" # The name of the application
   productIdentifier: "com.komika.app" # The unique product identifier
-  description: "Cross-platform manga viewer" # The application description
+  description: "Komika" # Shown as Windows FileDescription / Open With label
   copyright: "(c) 2026, Komika" # Copyright text
   comments: "Some Product Comments" # Comments
   version: "0.0.1" # The application version
@@ -59,20 +59,148 @@ dev_mode:
     - cmd: wails3 task run
       type: primary
 
-# File Associations
-# More information at: https://v3.wails.io/noit/done/yet
+# File Associations (macOS CFBundleDocumentTypes source).
+# Windows NSIS uses hand-authored OPENWITH macros — never APP_ASSOCIATE default takeover.
+# Keep in sync with associatedFileExts in open_request.go.
 fileAssociations:
-#  - ext: wails
-#    name: Wails
-#    description: Wails Application File
-#    iconName: wailsFileIcon
-#    role: Editor
-#  - ext: jpg
-#    name: JPEG
-#    description: Image File
-#    iconName: jpegFileIcon
-#    role: Editor
-#    mimeType: image/jpeg  # (optional)
+  - ext: cbz
+    name: Comic Book Zip
+    description: Comic Book Zip Archive
+    iconName: icons
+    role: Viewer
+    mimeType: application/vnd.comicbook+zip
+  - ext: zip
+    name: ZIP Archive
+    description: ZIP Archive
+    iconName: icons
+    role: Viewer
+    mimeType: application/zip
+  - ext: cbr
+    name: Comic Book RAR
+    description: Comic Book RAR Archive
+    iconName: icons
+    role: Viewer
+    mimeType: application/vnd.comicbook-rar
+  - ext: rar
+    name: RAR Archive
+    description: RAR Archive
+    iconName: icons
+    role: Viewer
+    mimeType: application/vnd.rar
+  - ext: cb7
+    name: Comic Book 7z
+    description: Comic Book 7z Archive
+    iconName: icons
+    role: Viewer
+    mimeType: application/x-cb7
+  - ext: 7z
+    name: 7z Archive
+    description: 7z Archive
+    iconName: icons
+    role: Viewer
+    mimeType: application/x-7z-compressed
+  - ext: pdf
+    name: PDF Document
+    description: PDF Document
+    iconName: icons
+    role: Viewer
+    mimeType: application/pdf
+  - ext: md
+    name: Markdown
+    description: Markdown Document
+    iconName: icons
+    role: Viewer
+    mimeType: text/markdown
+  - ext: markdown
+    name: Markdown
+    description: Markdown Document
+    iconName: icons
+    role: Viewer
+    mimeType: text/markdown
+  - ext: jpg
+    name: JPEG Image
+    description: JPEG Image
+    iconName: icons
+    role: Viewer
+    mimeType: image/jpeg
+  - ext: jpeg
+    name: JPEG Image
+    description: JPEG Image
+    iconName: icons
+    role: Viewer
+    mimeType: image/jpeg
+  - ext: png
+    name: PNG Image
+    description: PNG Image
+    iconName: icons
+    role: Viewer
+    mimeType: image/png
+  - ext: webp
+    name: WebP Image
+    description: WebP Image
+    iconName: icons
+    role: Viewer
+    mimeType: image/webp
+  - ext: gif
+    name: GIF Image
+    description: GIF Image
+    iconName: icons
+    role: Viewer
+    mimeType: image/gif
+  - ext: webm
+    name: WebM Video
+    description: WebM Video
+    iconName: icons
+    role: Viewer
+    mimeType: video/webm
+  - ext: mp4
+    name: MP4 Video
+    description: MP4 Video
+    iconName: icons
+    role: Viewer
+    mimeType: video/mp4
+  - ext: mov
+    name: QuickTime Video
+    description: QuickTime Video
+    iconName: icons
+    role: Viewer
+    mimeType: video/quicktime
+  - ext: mp3
+    name: MP3 Audio
+    description: MP3 Audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/mpeg
+  - ext: m4a
+    name: M4A Audio
+    description: M4A Audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/mp4
+  - ext: aac
+    name: AAC Audio
+    description: AAC Audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/aac
+  - ext: ogg
+    name: Ogg Audio
+    description: Ogg Audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/ogg
+  - ext: opus
+    name: Opus Audio
+    description: Opus Audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/opus
+  - ext: wav
+    name: WAV Audio
+    description: WAV Audio
+    iconName: icons
+    role: Viewer
+    mimeType: audio/wav
 
 # Other data
 other:

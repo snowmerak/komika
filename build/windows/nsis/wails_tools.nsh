@@ -14,10 +14,10 @@
     !define INFO_PRODUCTNAME "Komika"
 !endif
 !ifndef INFO_PRODUCTVERSION
-    !define INFO_PRODUCTVERSION "0.1.0"
+    !define INFO_PRODUCTVERSION "0.0.1"
 !endif
 !ifndef INFO_COPYRIGHT
-    !define INFO_COPYRIGHT "© 2026, My Company"
+    !define INFO_COPYRIGHT "(c) 2026, Komika"
 !endif
 !ifndef PRODUCT_EXECUTABLE
     !define PRODUCT_EXECUTABLE "${INFO_PROJECTNAME}.exe"
@@ -203,37 +203,87 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
     ok:
 !macroend
 
-# Copy of APP_ASSOCIATE and APP_UNASSOCIATE macros from here https://gist.github.com/nikku/281d0ef126dbc215dd58bfd5b3a5cd5b
+# Additive Open With only — never write Software\Classes\.<ext> default ProgID.
+!macro OPENWITH_ASSOCIATE EXT PROGID DESCRIPTION ICON
+  ; ProgID command — does NOT write Software\Classes\.${EXT} default value
+  WriteRegStr SHELL_CONTEXT "Software\Classes\${PROGID}" "" `${DESCRIPTION}`
+  WriteRegStr SHELL_CONTEXT "Software\Classes\${PROGID}\DefaultIcon" "" `${ICON}`
+  WriteRegStr SHELL_CONTEXT "Software\Classes\${PROGID}\shell\open\command" "" '"$INSTDIR\${PRODUCT_EXECUTABLE}" "%1"'
+  WriteRegStr SHELL_CONTEXT "Software\Classes\.${EXT}\OpenWithProgids" "${PROGID}" ""
+  WriteRegStr SHELL_CONTEXT "Software\Classes\Applications\${PRODUCT_EXECUTABLE}" "FriendlyAppName" "Komika"
+  WriteRegStr SHELL_CONTEXT "Software\Classes\Applications\${PRODUCT_EXECUTABLE}\SupportedTypes" ".${EXT}" ""
+  WriteRegStr SHELL_CONTEXT "Software\Classes\Applications\${PRODUCT_EXECUTABLE}\shell\open\command" "" '"$INSTDIR\${PRODUCT_EXECUTABLE}" "%1"'
+!macroend
+
+!macro OPENWITH_UNASSOCIATE EXT PROGID
+  DeleteRegValue SHELL_CONTEXT "Software\Classes\.${EXT}\OpenWithProgids" "${PROGID}"
+  DeleteRegKey SHELL_CONTEXT "Software\Classes\${PROGID}"
+!macroend
+
+# Legacy APP_ASSOCIATE macros kept unused so accidental inserts fail closed if reintroduced.
 !macro APP_ASSOCIATE EXT FILECLASS DESCRIPTION ICON COMMANDTEXT COMMAND
-  ; Backup the previously associated file class
-  ReadRegStr $R0 SHELL_CONTEXT "Software\Classes\.${EXT}" ""
-  WriteRegStr SHELL_CONTEXT "Software\Classes\.${EXT}" "${FILECLASS}_backup" "$R0"
-
-  WriteRegStr SHELL_CONTEXT "Software\Classes\.${EXT}" "" "${FILECLASS}"
-
-  WriteRegStr SHELL_CONTEXT "Software\Classes\${FILECLASS}" "" `${DESCRIPTION}`
-  WriteRegStr SHELL_CONTEXT "Software\Classes\${FILECLASS}\DefaultIcon" "" `${ICON}`
-  WriteRegStr SHELL_CONTEXT "Software\Classes\${FILECLASS}\shell" "" "open"
-  WriteRegStr SHELL_CONTEXT "Software\Classes\${FILECLASS}\shell\open" "" `${COMMANDTEXT}`
-  WriteRegStr SHELL_CONTEXT "Software\Classes\${FILECLASS}\shell\open\command" "" `${COMMAND}`
+  !error "APP_ASSOCIATE is disabled; use OPENWITH_ASSOCIATE (additive Open With only)"
 !macroend
 
 !macro APP_UNASSOCIATE EXT FILECLASS
-  ; Backup the previously associated file class
-  ReadRegStr $R0 SHELL_CONTEXT "Software\Classes\.${EXT}" `${FILECLASS}_backup`
-  WriteRegStr SHELL_CONTEXT "Software\Classes\.${EXT}" "" "$R0"
-
-  DeleteRegKey SHELL_CONTEXT `Software\Classes\${FILECLASS}`
+  !error "APP_UNASSOCIATE is disabled; use OPENWITH_UNASSOCIATE"
 !macroend
 
 !macro wails.associateFiles
-    ; Create file associations
-    
+    ; Create additive Open With associations only (no default-handler takeover)
+    File "..\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "cbz" "Komika.CBZ" "Comic Book Zip Archive" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "zip" "Komika.ZIP" "ZIP Archive" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "cbr" "Komika.CBR" "Comic Book RAR Archive" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "rar" "Komika.RAR" "RAR Archive" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "cb7" "Komika.CB7" "Comic Book 7z Archive" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "7z" "Komika.7Z" "7z Archive" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "pdf" "Komika.PDF" "PDF Document" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "md" "Komika.MD" "Markdown Document" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "markdown" "Komika.MARKDOWN" "Markdown Document" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "jpg" "Komika.JPG" "JPEG Image" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "jpeg" "Komika.JPEG" "JPEG Image" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "png" "Komika.PNG" "PNG Image" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "webp" "Komika.WEBP" "WebP Image" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "gif" "Komika.GIF" "GIF Image" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "webm" "Komika.WEBM" "WebM Video" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "mp4" "Komika.MP4" "MP4 Video" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "mov" "Komika.MOV" "QuickTime Video" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "mp3" "Komika.MP3" "MP3 Audio" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "m4a" "Komika.M4A" "M4A Audio" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "aac" "Komika.AAC" "AAC Audio" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "ogg" "Komika.OGG" "Ogg Audio" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "opus" "Komika.OPUS" "Opus Audio" "$INSTDIR\icon.ico"
+    !insertmacro OPENWITH_ASSOCIATE "wav" "Komika.WAV" "WAV Audio" "$INSTDIR\icon.ico"
 !macroend
 
 !macro wails.unassociateFiles
-    ; Delete app associations
-    
+    ; Delete additive Open With associations
+    !insertmacro OPENWITH_UNASSOCIATE "cbz" "Komika.CBZ"
+    !insertmacro OPENWITH_UNASSOCIATE "zip" "Komika.ZIP"
+    !insertmacro OPENWITH_UNASSOCIATE "cbr" "Komika.CBR"
+    !insertmacro OPENWITH_UNASSOCIATE "rar" "Komika.RAR"
+    !insertmacro OPENWITH_UNASSOCIATE "cb7" "Komika.CB7"
+    !insertmacro OPENWITH_UNASSOCIATE "7z" "Komika.7Z"
+    !insertmacro OPENWITH_UNASSOCIATE "pdf" "Komika.PDF"
+    !insertmacro OPENWITH_UNASSOCIATE "md" "Komika.MD"
+    !insertmacro OPENWITH_UNASSOCIATE "markdown" "Komika.MARKDOWN"
+    !insertmacro OPENWITH_UNASSOCIATE "jpg" "Komika.JPG"
+    !insertmacro OPENWITH_UNASSOCIATE "jpeg" "Komika.JPEG"
+    !insertmacro OPENWITH_UNASSOCIATE "png" "Komika.PNG"
+    !insertmacro OPENWITH_UNASSOCIATE "webp" "Komika.WEBP"
+    !insertmacro OPENWITH_UNASSOCIATE "gif" "Komika.GIF"
+    !insertmacro OPENWITH_UNASSOCIATE "webm" "Komika.WEBM"
+    !insertmacro OPENWITH_UNASSOCIATE "mp4" "Komika.MP4"
+    !insertmacro OPENWITH_UNASSOCIATE "mov" "Komika.MOV"
+    !insertmacro OPENWITH_UNASSOCIATE "mp3" "Komika.MP3"
+    !insertmacro OPENWITH_UNASSOCIATE "m4a" "Komika.M4A"
+    !insertmacro OPENWITH_UNASSOCIATE "aac" "Komika.AAC"
+    !insertmacro OPENWITH_UNASSOCIATE "ogg" "Komika.OGG"
+    !insertmacro OPENWITH_UNASSOCIATE "opus" "Komika.OPUS"
+    !insertmacro OPENWITH_UNASSOCIATE "wav" "Komika.WAV"
+    DeleteRegKey SHELL_CONTEXT "Software\Classes\Applications\${PRODUCT_EXECUTABLE}"
+    Delete "$INSTDIR\icon.ico"
 !macroend
 
 !macro CUSTOM_PROTOCOL_ASSOCIATE PROTOCOL DESCRIPTION ICON COMMAND

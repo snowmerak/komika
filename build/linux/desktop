@@ -1,13 +1,10 @@
 [Desktop Entry]
 Version=1.0
 Name=Komika
-Comment=Cross-platform manga viewer
 # The Exec line includes %u to pass the URL to the application
 Exec=/usr/local/bin/komika %u
 Terminal=false
 Type=Application
 Icon=komika
-Categories=Utility;
+Categories=Graphics;Viewer;
 StartupWMClass=komika
-
- 

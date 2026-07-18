@@ -8,6 +8,7 @@ export {
 
 export type {
     Comic,
+    DesktopIntegrationStatus,
     LibrarySettings,
     LibraryState,
     PageDescriptor,

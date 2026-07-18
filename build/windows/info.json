@@ -1,15 +1,15 @@
 {
 	"fixed": {
-		"file_version": "0.1.0"
+		"file_version": "0.0.1"
 	},
 	"info": {
 		"0000": {
-			"ProductVersion": "0.1.0",
+			"ProductVersion": "0.0.1",
 			"CompanyName": "Komika",
-			"FileDescription": "Cross-platform manga viewer",
-			"LegalCopyright": "© 2026, My Company",
+			"FileDescription": "Komika",
+			"LegalCopyright": "(c) 2026, Komika",
 			"ProductName": "Komika",
-			"Comments": "This is a comment"
+			"Comments": "Some Product Comments"
 		}
 	}
 }
