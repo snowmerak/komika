@@ -8,8 +8,7 @@
     "build:dev": "vite build --minify false --mode development",
     "build": "vite build --mode production",
     "preview": "vite preview",
-    "test:viewer": "node scripts/test-viewer.mjs",
-    "test:pdf-ratios": "node scripts/test-pdf-ratios.mjs"
+    "test:viewer": "node scripts/test-viewer.mjs"
   },
   "dependencies": {
     "@wailsio/runtime": "latest",

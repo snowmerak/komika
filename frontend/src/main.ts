@@ -14,7 +14,9 @@ import {
   orderPageLoadIndices,
   saveViewPreferences,
   releaseHtmlMediaElement,
+  shouldKeepWebtoonDomMedia,
   shouldLoadMediaDelivery,
+  shouldRetainCachedMedia,
   spreadForPage,
   type ImageRendering,
   type ManualTransform,
@@ -32,7 +34,7 @@ import {
   shouldUpscaleHQ,
   type CanvasScaleRendering,
 } from "./upscale";
-import { attachPdfPage, clearPdfDocCache, getPdfPageRatios } from "./pdf_render";
+import { attachPdfPage, clearPdfDocCache } from "./pdf_render";
 
 type ReadingDirection = "rtl" | "ltr";
 type HistoryAction = "disableSaving" | "removeSelected" | "clearAll";
@@ -939,7 +941,7 @@ function attachMediaElement(
     placeholder.dataset.mediaUrl = media.url;
     placeholder.textContent = "Loading PDF…";
     host.append(placeholder);
-    // Keep the 80vh shell until pdf.js reports the page's real viewport.
+    onSized({ width: 612, height: 792 });
 
     let disposed = false;
     let pdfCleanup: (() => void) | null = null;
@@ -1095,13 +1097,13 @@ function trimCache(
   for (const key of [...pageCache.keys()]) {
     const cached = pageCache.get(key);
     if (!cached) continue;
-    const shouldKeep =
-      cached.kind === "video" ||
-      cached.kind === "audio" ||
-      cached.kind === "pdf" ||
-      cached.delivery === "stream"
-        ? visible.has(key)
-        : keep.has(key);
+    const shouldKeep = shouldRetainCachedMedia(
+      cached.kind,
+      cached.delivery,
+      key,
+      keep,
+      visible
+    );
     if (!shouldKeep) {
       revokeCached(cached);
       pageCache.delete(key);
@@ -1214,6 +1216,7 @@ function stillWanted(index: number, comic: Comic): boolean {
   const pages = comic.pages ?? [];
   const desc = pages[index];
   const kind = mediaKindForMime(desc?.mime ?? "");
+  if (!kind) return false;
   let retainVisible: ReadonlySet<number>;
   if (mode === "webtoon") {
     retainVisible = new Set([state.webtoonActiveIndex]);
@@ -1222,10 +1225,13 @@ function stillWanted(index: number, comic: Comic): boolean {
   } else {
     retainVisible = new Set([state.pageIndex]);
   }
-  if (desc?.delivery === "stream" || kind === "video" || kind === "audio" || kind === "pdf") {
-    return shouldLoadMediaDelivery(desc?.delivery, kind, index, retainVisible);
-  }
-  return cacheIndices(active, comic.pageCount, mode).has(index);
+  return shouldRetainCachedMedia(
+    kind,
+    desc?.delivery,
+    index,
+    cacheIndices(active, comic.pageCount, mode),
+    retainVisible
+  );
 }
 
 async function loadOnePage(index: number): Promise<CachedMedia | undefined> {
@@ -2692,7 +2698,6 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
 
   const items: HTMLElement[] = [];
   const itemCleanups = new Map<number, () => void>();
-  const pdfRatioLoads = new Set<string>();
   for (let i = 0; i < comic.pageCount; i++) {
     const item = document.createElement("div");
     item.className = "reader__webtoon-item";
@@ -2703,31 +2708,6 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
     strip.append(item);
     items.push(item);
   }
-  const primePdfDocumentRatios = (media: CachedMedia): void => {
-    const key = media.documentKey;
-    if (!key || pdfRatioLoads.has(key)) return;
-    pdfRatioLoads.add(key);
-
-    void getPdfPageRatios(key, media.url)
-      .then((ratios) => {
-        if (generation !== renderGeneration) return;
-        for (let i = 0; i < comic.pageCount; i++) {
-          const desc = comic.pages?.[i];
-          if (desc?.documentKey !== key) continue;
-          const pageNum = desc.documentPage && desc.documentPage > 0 ? desc.documentPage : 1;
-          const ratio = ratios[pageNum - 1];
-          if (!ratio || !Number.isFinite(ratio)) continue;
-          state.webtoonPageRatios.set(i, ratio);
-          const item = items[i];
-          if (!item) continue;
-          item.style.aspectRatio = String(ratio);
-          item.style.minHeight = "";
-        }
-      })
-      .catch(() => {
-        pdfRatioLoads.delete(key);
-      });
-  };
 
   let stableTimer: number | null = null;
   const fillCached = (index: number): void => {
@@ -2737,9 +2717,8 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
       if (!item) continue;
       const media = pageCache.get(i);
       if (!media) continue;
-      if (media.kind === "pdf") primePdfDocumentRatios(media);
-      // Video/audio only stay mounted while active.
-      if ((media.kind === "video" || media.kind === "audio") && i !== index) continue;
+      // Video/audio only stay mounted while active; PDF/image neighbors stay.
+      if (!shouldKeepWebtoonDomMedia(media.kind, i, index, keep, true)) continue;
       // Skip re-attach when the same media is already present.
       const existing = item.querySelector(".reader__media");
       if (
@@ -2755,8 +2734,7 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
         "reader__webtoon-media",
         `Page ${i + 1}`,
         (size) => {
-          // Markdown reflows at its constrained content width; reserving an
-          // image-style ratio from its synthetic size creates trailing space.
+          // Markdown reflows; never lock an image-style ratio box.
           if (media.kind === "markdown") {
             state.webtoonPageRatios.delete(i);
             item.style.aspectRatio = "";
@@ -2777,8 +2755,13 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
     for (let i = 0; i < items.length; i++) {
       const media = pageCache.get(i);
       // Evicted/missing cache entries must unmount; video/audio only while active.
-      const shouldKeepDom =
-        keep.has(i) && !!media && ((media.kind !== "video" && media.kind !== "audio") || i === index);
+      const shouldKeepDom = shouldKeepWebtoonDomMedia(
+        media?.kind ?? "image",
+        i,
+        index,
+        keep,
+        !!media
+      );
       if (shouldKeepDom) continue;
       const item = items[i];
       itemCleanups.get(i)?.();

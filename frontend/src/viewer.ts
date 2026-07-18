@@ -288,10 +288,42 @@ export function shouldLoadMediaDelivery(
 ): boolean {
   if (!kind) return false;
   const isStream = delivery === "stream";
-  if (isStream && !visible.has(index)) return false;
-  // Video/audio/pdf are visible-only (pdf loads a whole document).
-  if ((kind === "video" || kind === "audio" || kind === "pdf") && !visible.has(index)) {
+  // Per-page streams stay visible-only. PDF shares one document URL across pages,
+  // so neighbors may load outside the strict visible set (cache window decides).
+  if (isStream && kind !== "pdf" && !visible.has(index)) return false;
+  // Video/audio stay mounted only while visible; PDF is rasterized per page and
+  // must retain neighbors for continuous scroll / page-turn.
+  if ((kind === "video" || kind === "audio") && !visible.has(index)) {
     return false;
   }
+  return true;
+}
+
+/** Whether a cached entry survives trimCache for the current keep/visible sets. */
+export function shouldRetainCachedMedia(
+  kind: MediaKind,
+  delivery: string | undefined,
+  index: number,
+  keep: ReadonlySet<number>,
+  visible: ReadonlySet<number>
+): boolean {
+  // Video/audio and per-page streams are visible-only. PDF shares one document URL
+  // and follows the normal cache window so webtoon neighbors stay warm.
+  if (kind === "video" || kind === "audio" || (delivery === "stream" && kind !== "pdf")) {
+    return visible.has(index);
+  }
+  return keep.has(index);
+}
+
+/** Webtoon strip: keep mounted media in the cache window (video/audio only while active). */
+export function shouldKeepWebtoonDomMedia(
+  kind: MediaKind,
+  index: number,
+  active: number,
+  keep: ReadonlySet<number>,
+  hasMedia: boolean
+): boolean {
+  if (!hasMedia || !keep.has(index)) return false;
+  if (kind === "video" || kind === "audio") return index === active;
   return true;
 }

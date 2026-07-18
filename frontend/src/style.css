@@ -615,7 +615,6 @@ body {
   width: 100%;
   background: var(--color-bg-subtle);
   border-bottom: 1px solid var(--color-border-muted);
-  position: relative;
 }
 
 .reader__webtoon-image,
@@ -628,6 +627,7 @@ body {
 }
 
 .reader__webtoon-media.reader__media--video {
+
   pointer-events: auto;
 }
 
@@ -645,11 +645,6 @@ body {
 }
 
 
-.reader__webtoon-item .reader__media--pdf-loading {
-  position: absolute;
-  inset: 0;
-  min-height: 0;
-}
 .reader__webtoon-media.reader__media--error {
   width: 100%;
   height: auto;
