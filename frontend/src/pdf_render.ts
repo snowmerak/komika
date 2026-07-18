@@ -17,6 +17,32 @@ export function getPdfDocument(cacheKey: string, url: string): Promise<PDFDocume
   return p;
 }
 
+const pdfPageRatioCache = new Map<string, Promise<number[]>>();
+
+/** Return each PDF page's intrinsic width / height ratio without rendering it. */
+export function getPdfPageRatios(cacheKey: string, url: string): Promise<number[]> {
+  let ratios = pdfPageRatioCache.get(cacheKey);
+  if (!ratios) {
+    ratios = (async () => {
+      const doc = await getPdfDocument(cacheKey, url);
+      const result: number[] = [];
+      for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
+        const page = await doc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1 });
+        result.push(viewport.width / viewport.height);
+      }
+      return result;
+    })();
+    pdfPageRatioCache.set(cacheKey, ratios);
+    void ratios.catch(() => {
+      if (pdfPageRatioCache.get(cacheKey) === ratios) {
+        pdfPageRatioCache.delete(cacheKey);
+      }
+    });
+  }
+  return ratios;
+}
+
 export function clearPdfDocCache(): void {
   for (const p of pdfDocCache.values()) {
     void p.then(
@@ -31,6 +57,7 @@ export function clearPdfDocCache(): void {
     );
   }
   pdfDocCache.clear();
+  pdfPageRatioCache.clear();
 }
 
 export type PdfAttachResult = {
@@ -75,11 +102,12 @@ export async function attachPdfPage(
     }
     canvas.width = Math.max(1, Math.floor(viewport.width));
     canvas.height = Math.max(1, Math.floor(viewport.height));
-    renderTask = page.render({ canvasContext: ctx, viewport, canvas });
-    await renderTask.promise;
+    // Layout needs the real page geometry before the potentially slow paint.
     if (!disposed) {
       opts.onSized({ width: viewport.width, height: viewport.height });
     }
+    renderTask = page.render({ canvasContext: ctx, viewport, canvas });
+    await renderTask.promise;
   } catch (err) {
     if (!disposed) {
       throw err;

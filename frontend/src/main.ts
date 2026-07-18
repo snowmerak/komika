@@ -32,7 +32,7 @@ import {
   shouldUpscaleHQ,
   type CanvasScaleRendering,
 } from "./upscale";
-import { attachPdfPage, clearPdfDocCache } from "./pdf_render";
+import { attachPdfPage, clearPdfDocCache, getPdfPageRatios } from "./pdf_render";
 
 type ReadingDirection = "rtl" | "ltr";
 type HistoryAction = "disableSaving" | "removeSelected" | "clearAll";
@@ -939,7 +939,7 @@ function attachMediaElement(
     placeholder.dataset.mediaUrl = media.url;
     placeholder.textContent = "Loading PDF…";
     host.append(placeholder);
-    onSized({ width: 612, height: 792 });
+    // Keep the 80vh shell until pdf.js reports the page's real viewport.
 
     let disposed = false;
     let pdfCleanup: (() => void) | null = null;
@@ -2692,6 +2692,7 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
 
   const items: HTMLElement[] = [];
   const itemCleanups = new Map<number, () => void>();
+  const pdfRatioLoads = new Set<string>();
   for (let i = 0; i < comic.pageCount; i++) {
     const item = document.createElement("div");
     item.className = "reader__webtoon-item";
@@ -2702,6 +2703,31 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
     strip.append(item);
     items.push(item);
   }
+  const primePdfDocumentRatios = (media: CachedMedia): void => {
+    const key = media.documentKey;
+    if (!key || pdfRatioLoads.has(key)) return;
+    pdfRatioLoads.add(key);
+
+    void getPdfPageRatios(key, media.url)
+      .then((ratios) => {
+        if (generation !== renderGeneration) return;
+        for (let i = 0; i < comic.pageCount; i++) {
+          const desc = comic.pages?.[i];
+          if (desc?.documentKey !== key) continue;
+          const pageNum = desc.documentPage && desc.documentPage > 0 ? desc.documentPage : 1;
+          const ratio = ratios[pageNum - 1];
+          if (!ratio || !Number.isFinite(ratio)) continue;
+          state.webtoonPageRatios.set(i, ratio);
+          const item = items[i];
+          if (!item) continue;
+          item.style.aspectRatio = String(ratio);
+          item.style.minHeight = "";
+        }
+      })
+      .catch(() => {
+        pdfRatioLoads.delete(key);
+      });
+  };
 
   let stableTimer: number | null = null;
   const fillCached = (index: number): void => {
@@ -2711,6 +2737,7 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
       if (!item) continue;
       const media = pageCache.get(i);
       if (!media) continue;
+      if (media.kind === "pdf") primePdfDocumentRatios(media);
       // Video/audio only stay mounted while active.
       if ((media.kind === "video" || media.kind === "audio") && i !== index) continue;
       // Skip re-attach when the same media is already present.
@@ -2728,6 +2755,14 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
         "reader__webtoon-media",
         `Page ${i + 1}`,
         (size) => {
+          // Markdown reflows at its constrained content width; reserving an
+          // image-style ratio from its synthetic size creates trailing space.
+          if (media.kind === "markdown") {
+            state.webtoonPageRatios.delete(i);
+            item.style.aspectRatio = "";
+            item.style.minHeight = "";
+            return;
+          }
           if (size.width > 0 && size.height > 0) {
             const r = size.width / size.height;
             state.webtoonPageRatios.set(i, r);
