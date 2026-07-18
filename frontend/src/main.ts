@@ -2078,10 +2078,26 @@ function renderReader(): HTMLElement {
     }
   );
   floatToggle.setAttribute("aria-expanded", String(!state.toolbarCollapsed));
-  const collapseIcon = svgIcon('<polyline points="18 15 12 9 6 15"/>');
-  collapseIcon.classList.add("reader__toolbar-float-icon", "reader__toolbar-float-icon--collapse");
-  const expandIcon = svgIcon('<polyline points="6 9 12 15 18 9"/>');
-  expandIcon.classList.add("reader__toolbar-float-icon", "reader__toolbar-float-icon--expand");
+  const collapseIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  collapseIcon.setAttribute("viewBox", "0 0 24 24");
+  collapseIcon.setAttribute("aria-hidden", "true");
+  collapseIcon.classList.add(
+    "mp-symbol",
+    "mp-symbol--sm",
+    "reader__toolbar-float-icon",
+    "reader__toolbar-float-icon--collapse"
+  );
+  collapseIcon.innerHTML = '<path d="m6.5 14.8 5.5-5.6 5.5 5.6"/>';
+  const expandIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  expandIcon.setAttribute("viewBox", "0 0 24 24");
+  expandIcon.setAttribute("aria-hidden", "true");
+  expandIcon.classList.add(
+    "mp-symbol",
+    "mp-symbol--sm",
+    "reader__toolbar-float-icon",
+    "reader__toolbar-float-icon--expand"
+  );
+  expandIcon.innerHTML = '<path d="m6.5 9.2 5.5 5.6 5.5-5.6"/>';
   floatToggle.append(collapseIcon, expandIcon);
 
   const stage = document.createElement("div");

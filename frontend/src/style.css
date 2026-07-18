@@ -308,9 +308,10 @@ body {
   opacity: 1;
 }
 
-.reader__toolbar-float .icon {
+.reader__toolbar-float .mp-symbol {
   width: 16px;
   height: 16px;
+  color: inherit;
 }
 
 .reader__toolbar-float-icon--expand {
