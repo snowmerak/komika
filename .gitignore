@@ -1,15 +1,28 @@
-.task
-bin
-frontend/dist
-frontend/node_modules
-build/linux/appimage/build
+# Task runner cache
+.task/
+
+# Build / package outputs
+bin/
+frontend/dist/
+frontend/node_modules/
+
+# Linux AppImage staging (binary copied from bin/ during package)
+build/linux/appimage/build/
+build/linux/appimage/komika
+
+# Windows NSIS bootstrapper download
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+
 # Mobile generated (per-machine; overlays hold absolute paths)
 build/ios/xcode/overlay.json
 build/ios/xcode/gen/
 build/android/overlay.json
 build/android/gen/
-build/android/.gradle/9.2.1/fileHashes
-build/linux/appimage/komika
-build/android/.gradle/9.2.1/checksums
-build/android/build
+build/android/.gradle/
+build/android/build/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
