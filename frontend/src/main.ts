@@ -26,6 +26,7 @@ import {
   type ViewMode,
   type ViewPreferences,
 } from "./viewer";
+import { combinedFallbackMessage, transcodeWithWasm, WASM_TRANSCODE_MAX_BYTES } from "./media_wasm";
 import {
   clampTileDest,
   drawImageRegion,
@@ -101,6 +102,8 @@ interface CachedMedia {
   kind: MediaKind;
   url: string;
   delivery: "blob" | "stream";
+  /** Original source size when known (from PageDescriptor / payload). */
+  sizeBytes?: number;
   streamToken?: string;
   documentPage?: number;
   documentKey?: string;
@@ -477,6 +480,56 @@ function makeUnavailableMediaCard(message: string, mediaUrl?: string): HTMLEleme
   const card = document.createElement("div");
   card.className = "reader__media reader__media--error";
   card.setAttribute("role", "img");
+  card.textContent = message;
+  if (mediaUrl) card.dataset.mediaUrl = mediaUrl;
+  return card;
+}
+
+
+/** Prefer codec-parameter probes; bare video/mp4 often returns "maybe" without H.264. */
+function hostLikelySupportsAV(kind: "video" | "audio", mime: string): boolean {
+  const lower = (mime || "").toLowerCase();
+  const el = document.createElement(kind);
+  const probes: string[] = [lower];
+  if (kind === "video") {
+    if (lower === "video/mp4" || lower === "video/quicktime") {
+      probes.push(
+        'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+        'video/mp4; codecs="avc1.4D401E, mp4a.40.2"',
+        'video/mp4; codecs="avc1.64001F, mp4a.40.2"'
+      );
+    } else if (lower === "video/webm") {
+      probes.push('video/webm; codecs="vp8, vorbis"', 'video/webm; codecs="vp9, opus"');
+    }
+  } else {
+    if (lower === "audio/mp4" || lower === "audio/aac") {
+      probes.push('audio/mp4; codecs="mp4a.40.2"', 'audio/aac');
+    } else if (lower === "audio/mpeg") {
+      probes.push("audio/mpeg");
+    }
+  }
+  // Support if any probe is "probably" or at least one non-empty and not all empty for bare type only.
+  let any = false;
+  let probably = false;
+  for (const p of probes) {
+    const r = el.canPlayType(p);
+    if (r === "probably") probably = true;
+    if (r !== "") any = true;
+  }
+  if (probably) return true;
+  // Bare container "maybe" without codec-specific support => treat as unsupported.
+  if (probes.length > 1) {
+    const codecHits = probes.slice(1).some((p) => el.canPlayType(p) !== "");
+    return codecHits;
+  }
+  return any;
+}
+
+function makeLoadingMediaCard(message: string, mediaUrl?: string): HTMLElement {
+  const card = document.createElement("div");
+  card.className = "reader__media reader__media--loading";
+  card.setAttribute("role", "status");
+  card.setAttribute("aria-live", "polite");
   card.textContent = message;
   if (mediaUrl) card.dataset.mediaUrl = mediaUrl;
   return card;
@@ -997,6 +1050,8 @@ function attachMediaElement(
     let disposed = false;
     let fallbackAttempted = false;
     let fallingBack = false;
+    let fallbackAbort: AbortController | null = null;
+    let ownedWasmBlobUrl: string | null = null;
 
     const showAudioError = (message: string): void => {
       if (disposed) return;
@@ -1010,46 +1065,102 @@ function attachMediaElement(
       onSized({ width: 16, height: 9 });
     };
 
+    const revokeOwnedWasm = (): void => {
+      if (ownedWasmBlobUrl) {
+        URL.revokeObjectURL(ownedWasmBlobUrl);
+        ownedWasmBlobUrl = null;
+      }
+    };
+
+    const applyAudioSource = (
+      url: string,
+      mime: string,
+      delivery: "blob" | "stream",
+      token?: string
+    ): void => {
+      if (media.delivery === "blob" && media.url.startsWith("blob:") && media.url !== ownedWasmBlobUrl) {
+        URL.revokeObjectURL(media.url);
+      } else if (media.streamToken) {
+        void ComicService.ReleasePageStream(media.streamToken).catch(() => {});
+      }
+      revokeOwnedWasm();
+      if (delivery === "blob" && url.startsWith("blob:")) {
+        ownedWasmBlobUrl = url;
+      }
+      media.url = url;
+      media.mime = mime;
+      media.delivery = delivery;
+      media.streamToken = token;
+      shell.dataset.mediaUrl = media.url;
+      audio.src = media.url;
+      audio.load();
+      // Loading card may have replaced host children; remount the player shell.
+      if (shell.parentElement !== host) {
+        host.replaceChildren(shell);
+      }
+      onSized({ width: 16, height: 9 });
+    };
+
+    const tryWasmAudioFallback = async (priorErr: unknown): Promise<void> => {
+      fallbackAbort?.abort();
+      fallbackAbort = new AbortController();
+      showAudioLoading("Decoding audio in-app…");
+      try {
+        const result = await transcodeWithWasm(media.url, media.mime, "audio", fallbackAbort.signal);
+        if (disposed) return;
+        applyAudioSource(URL.createObjectURL(result.blob), result.mime, "blob");
+      } catch (wasmErr) {
+        if (disposed) return;
+        if (wasmErr instanceof DOMException && wasmErr.name === "AbortError") return;
+        showAudioError(combinedFallbackMessage(priorErr, wasmErr, "audio"));
+      }
+    };
+
+    const showAudioLoading = (message: string): void => {
+      if (disposed) return;
+      const card = makeLoadingMediaCard(message, media.url);
+      card.className = `${className} ${card.className}`;
+      host.replaceChildren(card);
+      onSized({ width: 16, height: 9 });
+    };
+
     const tryTranscodeFallback = (): void => {
       if (disposed || fallingBack || fallbackAttempted) return;
       fallingBack = true;
       fallbackAttempted = true;
-      if (pageIndex < 0) {
-        showAudioError(mediaPlaybackFallbackMessage(null, "audio"));
+      showAudioLoading("Preparing compatible audio…");
+      const finish = (): void => {
         fallingBack = false;
+      };
+      if (pageIndex < 0) {
+        showAudioError("Missing page index for transcoder fallback.");
+        finish();
         return;
       }
+      const knownSize = typeof media.sizeBytes === "number" && media.sizeBytes > 0 ? media.sizeBytes : Infinity;
+      const allowWasm =
+        media.delivery !== "stream" && knownSize <= WASM_TRANSCODE_MAX_BYTES;
       void ComicService.GetTranscodedStream(pageIndex)
-        .then((stream) => {
+        .then(async (stream) => {
           if (disposed) {
             if (stream?.token) void ComicService.ReleasePageStream(stream.token).catch(() => {});
             return;
           }
           if (!stream?.url || !stream.token) {
-            showAudioError(mediaPlaybackFallbackMessage(null, "audio"));
+            if (allowWasm) await tryWasmAudioFallback(new Error("empty transcoder response"));
+            else showAudioError("Transcoder returned an empty stream. Is ffmpeg installed?");
             return;
           }
-          // Drop original blob/stream once we own a fallback token.
-          if (media.delivery === "blob") {
-            URL.revokeObjectURL(media.url);
-          } else if (media.streamToken) {
-            void ComicService.ReleasePageStream(media.streamToken).catch(() => {});
-          }
-          media.url = stream.url;
-          media.mime = stream.mime || "audio/ogg";
-          media.delivery = "stream";
-          media.streamToken = stream.token;
-          shell.dataset.mediaUrl = media.url;
-          audio.src = media.url;
-          audio.load();
+          console.info("[komika] host audio transcode ready", stream);
+          applyAudioSource(stream.url, stream.mime || "audio/ogg", "stream", stream.token);
         })
-        .catch((err) => {
+        .catch(async (err) => {
           if (disposed) return;
-          showAudioError(mediaPlaybackFallbackMessage(err, "audio"));
+          console.warn("[komika] host audio transcode failed", err);
+          if (allowWasm) await tryWasmAudioFallback(err);
+          else showAudioError(mediaPlaybackFallbackMessage(err, "audio"));
         })
-        .finally(() => {
-          fallingBack = false;
-        });
+        .finally(finish);
     };
 
     const onError = (): void => {
@@ -1064,8 +1175,7 @@ function attachMediaElement(
     audio.addEventListener("loadedmetadata", onMeta);
     audio.addEventListener("error", onError);
 
-    const rejected = document.createElement("audio").canPlayType(media.mime) === "";
-    if (rejected) {
+    if (!hostLikelySupportsAV("audio", media.mime)) {
       tryTranscodeFallback();
     } else {
       audio.src = media.url;
@@ -1078,9 +1188,16 @@ function attachMediaElement(
       el: shell,
       cleanup: () => {
         disposed = true;
+        fallbackAbort?.abort();
         audio.removeEventListener("loadedmetadata", onMeta);
         audio.removeEventListener("error", onError);
         releaseHtmlMediaElement(audio);
+        // pageCache owns media.url; only revoke a wasm blob we created if still local-owned
+        // and not adopted into the cache entry path used elsewhere.
+        if (ownedWasmBlobUrl && media.url !== ownedWasmBlobUrl) {
+          URL.revokeObjectURL(ownedWasmBlobUrl);
+        }
+        ownedWasmBlobUrl = null;
       },
     };
   }
@@ -1099,9 +1216,20 @@ function attachMediaElement(
   let disposed = false;
   let fallbackAttempted = false;
   let fallingBack = false;
+  let fallbackAbort: AbortController | null = null;
+  let ownedWasmBlobUrl: string | null = null;
+  let metaTimer: number | null = null;
+
+  const clearMetaTimer = (): void => {
+    if (metaTimer != null) {
+      window.clearTimeout(metaTimer);
+      metaTimer = null;
+    }
+  };
 
   const showVideoError = (message: string): void => {
     if (disposed) return;
+    clearMetaTimer();
     const card = makeUnavailableMediaCard(message, media.url);
     card.className = `${className} ${card.className}`;
     host.replaceChildren(card);
@@ -1109,51 +1237,116 @@ function attachMediaElement(
   };
 
   const onMeta = (): void => {
+    clearMetaTimer();
     if (video.videoWidth > 0 && video.videoHeight > 0) {
       onSized({ width: video.videoWidth, height: video.videoHeight });
     }
+  };
+
+  const revokeOwnedWasm = (): void => {
+    if (ownedWasmBlobUrl) {
+      URL.revokeObjectURL(ownedWasmBlobUrl);
+      ownedWasmBlobUrl = null;
+    }
+  };
+
+  const applyVideoSource = (
+    url: string,
+    mime: string,
+    delivery: "blob" | "stream",
+    token?: string
+  ): void => {
+    if (media.delivery === "blob" && media.url.startsWith("blob:") && media.url !== ownedWasmBlobUrl) {
+      URL.revokeObjectURL(media.url);
+    } else if (media.streamToken) {
+      void ComicService.ReleasePageStream(media.streamToken).catch(() => {});
+    }
+    revokeOwnedWasm();
+    if (delivery === "blob" && url.startsWith("blob:")) {
+      ownedWasmBlobUrl = url;
+    }
+    media.url = url;
+    media.mime = mime;
+    media.delivery = delivery;
+    media.streamToken = token;
+    video.dataset.mediaUrl = media.url;
+    video.src = media.url;
+    video.load();
+    // Loading card may have replaced host children; remount the video element.
+    if (video.parentElement !== host) {
+      host.replaceChildren(video);
+    }
+    void video.play().catch(() => {});
+  };
+
+  const tryWasmVideoFallback = async (priorErr: unknown): Promise<void> => {
+    fallbackAbort?.abort();
+    fallbackAbort = new AbortController();
+    showVideoLoading("Decoding video in-app (this can take a while for large files)…");
+    try {
+      const result = await transcodeWithWasm(media.url, media.mime, "video", fallbackAbort.signal);
+      if (disposed) return;
+      applyVideoSource(URL.createObjectURL(result.blob), result.mime, "blob");
+    } catch (wasmErr) {
+      if (disposed) return;
+      if (wasmErr instanceof DOMException && wasmErr.name === "AbortError") return;
+      showVideoError(combinedFallbackMessage(priorErr, wasmErr, "video"));
+    }
+  };
+
+  const showVideoLoading = (message: string): void => {
+    if (disposed) return;
+    const card = makeLoadingMediaCard(message, media.url);
+    card.className = `${className} ${card.className}`;
+    host.replaceChildren(card);
+    onSized({ width: 16, height: 9 });
   };
 
   const tryTranscodeFallback = (): void => {
     if (disposed || fallingBack || fallbackAttempted) return;
     fallingBack = true;
     fallbackAttempted = true;
-    if (pageIndex < 0) {
-      showVideoError(mediaPlaybackFallbackMessage(null, "video"));
+    clearMetaTimer();
+    showVideoLoading("Preparing compatible video (system ffmpeg)…");
+    const finish = (): void => {
       fallingBack = false;
+    };
+    // Byte-size gate (fail closed when unknown): 1080p can be <32MiB RPC and still freeze wasm.
+    const knownSize = typeof media.sizeBytes === "number" && media.sizeBytes > 0 ? media.sizeBytes : Infinity;
+    const allowWasm =
+      media.delivery !== "stream" &&
+      pageIndex >= 0 &&
+      knownSize <= WASM_TRANSCODE_MAX_BYTES;
+    if (pageIndex < 0) {
+      showVideoError("Missing page index for transcoder fallback.");
+      finish();
       return;
     }
     void ComicService.GetTranscodedStream(pageIndex)
-      .then((stream) => {
+      .then(async (stream) => {
         if (disposed) {
           if (stream?.token) void ComicService.ReleasePageStream(stream.token).catch(() => {});
           return;
         }
         if (!stream?.url || !stream.token) {
-          showVideoError(mediaPlaybackFallbackMessage(null, "video"));
+          if (allowWasm) await tryWasmVideoFallback(new Error("empty transcoder response"));
+          else showVideoError("Transcoder returned an empty stream. Is ffmpeg installed?");
           return;
         }
-        if (media.delivery === "blob") {
-          URL.revokeObjectURL(media.url);
-        } else if (media.streamToken) {
-          void ComicService.ReleasePageStream(media.streamToken).catch(() => {});
-        }
-        media.url = stream.url;
-        media.mime = stream.mime || "video/webm";
-        media.delivery = "stream";
-        media.streamToken = stream.token;
-        video.dataset.mediaUrl = media.url;
-        video.src = media.url;
-        video.load();
-        void video.play().catch(() => {});
+        // Backend may include mime; surface resolved path via console for diagnostics.
+        console.info("[komika] host transcode ready", stream);
+        applyVideoSource(stream.url, stream.mime || "video/webm", "stream", stream.token);
       })
-      .catch((err) => {
+      .catch(async (err) => {
         if (disposed) return;
+        console.warn("[komika] host transcode failed", err);
+        if (allowWasm) {
+          await tryWasmVideoFallback(err);
+          return;
+        }
         showVideoError(mediaPlaybackFallbackMessage(err, "video"));
       })
-      .finally(() => {
-        fallingBack = false;
-      });
+      .finally(finish);
   };
 
   const onError = (): void => {
@@ -1173,12 +1366,19 @@ function attachMediaElement(
   video.addEventListener("error", onError);
   video.addEventListener("pointerdown", unmuteOnGesture, { once: true });
 
-  const rejected = document.createElement("video").canPlayType(media.mime) === "";
-  if (rejected) {
+  // Bare video/mp4 often returns "maybe" without H.264; that path can stall WebKitGTK.
+  const supported = hostLikelySupportsAV("video", media.mime);
+  if (!supported) {
     tryTranscodeFallback();
   } else {
     video.src = media.url;
     void video.play().catch(() => {});
+    // If metadata never arrives (codec stall), force fallback.
+    metaTimer = window.setTimeout(() => {
+      if (disposed || fallbackAttempted) return;
+      if (video.videoWidth > 0 || video.readyState >= 1) return;
+      tryTranscodeFallback();
+    }, 2500);
   }
 
   host.append(video);
@@ -1186,10 +1386,16 @@ function attachMediaElement(
     el: video,
     cleanup: () => {
       disposed = true;
+      clearMetaTimer();
+      fallbackAbort?.abort();
       video.removeEventListener("loadedmetadata", onMeta);
       video.removeEventListener("error", onError);
       video.removeEventListener("pointerdown", unmuteOnGesture);
       releaseHtmlMediaElement(video);
+      if (ownedWasmBlobUrl && media.url !== ownedWasmBlobUrl) {
+        URL.revokeObjectURL(ownedWasmBlobUrl);
+      }
+      ownedWasmBlobUrl = null;
     },
   };
 }
@@ -1374,6 +1580,7 @@ async function loadOnePage(index: number): Promise<CachedMedia | undefined> {
               kind: fetchKind,
               url: stream.url,
               delivery: "stream",
+              sizeBytes: typeof fetchDesc?.sizeBytes === "number" ? fetchDesc.sizeBytes : undefined,
               streamToken: stream.token,
               documentKey,
             };
@@ -1388,6 +1595,7 @@ async function loadOnePage(index: number): Promise<CachedMedia | undefined> {
             kind: payloadKind,
             url: URL.createObjectURL(new Blob([bytes], { type: payload.mime })),
             delivery: "blob",
+            sizeBytes: bytes.byteLength,
             documentKey,
           };
         })();
@@ -1464,6 +1672,7 @@ async function loadOnePage(index: number): Promise<CachedMedia | undefined> {
       kind,
       url: stream.url,
       delivery: "stream",
+      sizeBytes: typeof desc?.sizeBytes === "number" ? desc.sizeBytes : undefined,
       streamToken: stream.token,
       documentPage,
       documentKey,
@@ -1479,6 +1688,7 @@ async function loadOnePage(index: number): Promise<CachedMedia | undefined> {
       kind: payloadKind,
       url: URL.createObjectURL(new Blob([bytes], { type: payload.mime })),
       delivery: "blob",
+      sizeBytes: bytes.byteLength,
       documentPage,
       documentKey,
     };

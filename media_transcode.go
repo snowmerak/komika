@@ -5,15 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 const (
 	defaultMaxTranscodeTempBytes = 2 << 30
-	transcodeProfile             = "webm-vp8-opus-v1"
+	transcodeProfile             = "webm-vp8-opus-rt-v2"
 	transcodeAudioProfile        = "ogg-opus-v1"
 )
 
@@ -26,14 +28,56 @@ var (
 )
 
 // lookFFmpegPath resolves the ffmpeg binary. Tests may override.
+// Order: $FFMPEG → PATH → common absolute locations (GUI apps often have a short PATH).
 var lookFFmpegPath = func() (string, error) {
-	return exec.LookPath("ffmpeg")
+	return resolveFFmpegPath()
+}
+
+func resolveFFmpegPath() (string, error) {
+	if p := strings.TrimSpace(os.Getenv("FFMPEG")); p != "" {
+		if isExecutableFile(p) {
+			return p, nil
+		}
+		return "", fmt.Errorf("%w: FFMPEG=%q is not an executable file", errFFmpegUnavailable, p)
+	}
+	if p, err := exec.LookPath("ffmpeg"); err == nil {
+		return p, nil
+	}
+	// Desktop/AppImage launches often inherit a minimal PATH without brew/user bins.
+	candidates := []string{
+		"/usr/bin/ffmpeg",
+		"/usr/local/bin/ffmpeg",
+		"/opt/homebrew/bin/ffmpeg",
+		"/home/linuxbrew/.linuxbrew/bin/ffmpeg",
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".linuxbrew", "bin", "ffmpeg"),
+			filepath.Join(home, ".local", "bin", "ffmpeg"),
+		)
+	}
+	for _, p := range candidates {
+		if isExecutableFile(p) {
+			return p, nil
+		}
+	}
+	return "", errFFmpegUnavailable
+}
+
+func isExecutableFile(path string) bool {
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() || !st.Mode().IsRegular() {
+		return false
+	}
+	return st.Mode().Perm()&0o111 != 0
 }
 
 // runFFmpegCommand runs ffmpeg. Tests may override.
 // ctx cancel (source switch / shutdown) kills the process.
+// Strips AppImage library overrides so a host ffmpeg does not load bundled libs.
 var runFFmpegCommand = func(ctx context.Context, ffmpegPath string, args []string) error {
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd.Env = sanitizedExecEnv()
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -50,6 +94,27 @@ var runFFmpegCommand = func(ctx context.Context, ffmpegPath string, args []strin
 		return fmt.Errorf("%w: %s", errTranscodeFailed, msg)
 	}
 	return nil
+}
+
+// sanitizedExecEnv is os.Environ without AppImage/loader overrides that break
+// host tools resolved outside the bundle (common when spawning /usr or brew ffmpeg).
+func sanitizedExecEnv() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		upper := e
+		if i := strings.IndexByte(e, '='); i > 0 {
+			upper = e[:i]
+		}
+		switch strings.ToUpper(upper) {
+		case "LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT", "LD_DEBUG",
+			"PYTHONHOME", "PYTHONPATH", "GTK_PATH", "GTK_EXE_PREFIX",
+			"QT_PLUGIN_PATH", "QML2_IMPORT_PATH":
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 type transcodeCacheEntry struct {
@@ -230,8 +295,10 @@ func (s *ComicService) runTranscode(
 	}
 	ffmpegPath, err := lookFFmpegPath()
 	if err != nil {
+		log.Printf("komika: ffmpeg unavailable: %v", err)
 		return nil, errFFmpegUnavailable
 	}
+	log.Printf("komika: host transcode using %s (kind=%s)", ffmpegPath, kind)
 
 	// Folder/standalone: ps.path. Archive: materialize seekable temp for ffmpeg -i.
 	inputPath, cleanupInput, err := s.materializeTranscodeInput(ps)
@@ -302,22 +369,25 @@ func (s *ComicService) runTranscode(
 	s.transcodeCache[cacheKey] = entry
 	return entry, nil
 }
-
 func transcodeOutputArgs(kind string) (mime string, args []string) {
 	if kind == "audio" {
 		return "audio/ogg", []string{
+			"-threads", "2",
 			"-vn",
 			"-c:a", "libopus",
 			"-b:a", "96k",
 			"-f", "ogg",
 		}
 	}
+	// Cap threads so interactive UI stays responsive during 1080p re-encode.
 	return "video/webm", []string{
+		"-threads", "2",
 		"-c:v", "libvpx",
 		"-b:v", "1M",
-		"-crf", "32",
-		"-deadline", "good",
-		"-cpu-used", "4",
+		"-crf", "35",
+		"-deadline", "realtime",
+		"-cpu-used", "8",
+		"-row-mt", "1",
 		"-auto-alt-ref", "0",
 		"-c:a", "libopus",
 		"-b:a", "96k",

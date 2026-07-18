@@ -25,37 +25,50 @@ contents:
     dst: "/usr/share/applications/komika.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
+# WebKitGTK <video> uses GStreamer. H.264/AAC MP4 typically needs libav (+ good for qtdemux/MP4).
+# VLC can play the same files via its own codecs even when WebView cannot.
 depends:
   - libgtk-4-1
   - libwebkitgtk-6.0-4
-
-# Soft deps: native WebView codecs + ffmpeg fallback for H.264/AAC on Linux.
-recommends:
-  - ffmpeg
   - gstreamer1.0-libav
   - gstreamer1.0-plugins-good
+
+# Extra demuxers/codecs and host transcoder fallback.
+recommends:
+  - gstreamer1.0-plugins-base
   - gstreamer1.0-plugins-bad
   - gstreamer1.0-plugins-ugly
+  - gstreamer1.0-tools
+  - ffmpeg
 
 # Distribution-specific overrides for different package formats
 overrides:
   # RPM packages for Fedora / RHEL / AlmaLinux / Rocky Linux
+  # Fedora default repos ship ffmpeg-free; full ffmpeg is RPM Fusion.
   rpm:
     depends:
       - gtk4
       - webkitgtk6.0
-    recommends:
-      - ffmpeg
-      - gstreamer1-libav
+      - gstreamer1-plugin-libav
       - gstreamer1-plugins-good
+    recommends:
+      - gstreamer1-plugins-base
       - gstreamer1-plugins-bad-free
       - gstreamer1-plugins-ugly-free
+      - ffmpeg-free
 
   # Arch Linux packages
   archlinux:
     depends:
       - gtk4
       - webkitgtk-6.0
+      - gst-libav
+      - gst-plugins-good
+    recommends:
+      - gst-plugins-base
+      - gst-plugins-bad
+      - gst-plugins-ugly
+      - ffmpeg
 
 # scripts section to ensure desktop database is updated after install
 scripts:

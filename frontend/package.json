@@ -11,6 +11,9 @@
     "test:viewer": "node scripts/test-viewer.mjs"
   },
   "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "@wailsio/runtime": "latest",
     "merak-protocol-design-system": "^0.2.3",
     "pdfjs-dist": "^6.1.200"

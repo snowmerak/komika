@@ -279,25 +279,26 @@ export function releaseHtmlMediaElement(el: {
   el.load();
 }
 
-/** User-facing message when native play and ffmpeg fallback both fail. */
+/** User-facing message when native play and host/wasm fallback both fail. */
 export function mediaPlaybackFallbackMessage(err: unknown, kind: "video" | "audio"): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const lower = raw.toLowerCase();
   if (
     lower.includes("ffmpeg not found") ||
     lower.includes("executable file not found") ||
-    lower.includes("not found on path")
+    lower.includes("not found on path") ||
+    lower.includes("ffmpeg=")
   ) {
     return kind === "video"
-      ? "This video codec is not supported here. Install ffmpeg to enable fallback playback."
-      : "This audio codec is not supported here. Install ffmpeg to enable fallback playback.";
+      ? "WebView could not decode this video (VLC may still play it). Install WebKit/GStreamer codecs and/or ffmpeg — Debian/Ubuntu: sudo apt install gstreamer1.0-libav gstreamer1.0-plugins-good ffmpeg"
+      : "WebView could not decode this audio. Debian/Ubuntu: sudo apt install gstreamer1.0-libav gstreamer1.0-plugins-good ffmpeg";
   }
   if (raw.trim() !== "") {
     return raw;
   }
   return kind === "video"
-    ? "This video format or codec is not supported on this device."
-    : "This audio format or codec is not supported on this device.";
+    ? "WebView could not play this video (often H.264/AAC). Debian/Ubuntu: sudo apt install gstreamer1.0-libav gstreamer1.0-plugins-good ffmpeg — then fully restart the app. AppImage needs bundled GStreamer plugins (rebuild) or use .deb / host ffmpeg fallback."
+    : "WebView could not play this audio. Debian/Ubuntu: sudo apt install gstreamer1.0-libav gstreamer1.0-plugins-good ffmpeg";
 }
 
 

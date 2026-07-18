@@ -1,6 +1,6 @@
 # Komika
 
-CBZ/ZIP, CBR/RAR, CB7/7z 아카이브, 이미지/동영상/오디오 폴더, 단독 PDF·Markdown을 읽는 로컬 우선 만화 뷰어입니다. [Wails v3](https://v3.wails.io/) (Go 백엔드 + TypeScript 프론트엔드)로 구성됩니다.
+CBZ/ZIP, CBR/RAR, CB7/7z 아카이브, 이미지/동영상/오디오: 호스트 WebView 코덱 우선(Linux WebKitGTK는 **GStreamer** libav/good/bad/ugly 필요 — deb 의존성). 폴백: 시스템 **ffmpeg**(PATH/`$FFMPEG`; ≤12 MiB는 wasm 가능). VLC는 되고 WebView만 안 되면 GStreamer/WebKit 경로 문제일 수 있습니다. `.deb` 또는 호스트 `ffmpeg` 폴백을 검토하세요.
 
 **언어:** [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
@@ -110,7 +110,64 @@ wails3 task test
 
 바인딩과 프로덕션 프론트 번들은 `wails3 task build` 과정에서 재생성됩니다.
 
-`testdata/reader-fixture/`와 `testdata/media-fixture/`는 정지 이미지, 애니메이션 GIF, 짧은 WebM/MP4/MOV 샘플을 폴더·CBZ·7z·CBR 소스로 제공합니다. `testdata/docs-fixture/`에는 샘플 PDF와 Markdown이 있습니다. 단독 미디어/문서 파일은 1페이지(또는 다중 페이지 PDF) **Media** 소스로 열립니다. 동영상/오디오는 먼저 호스트 WebView 코덱 스택으로 재생하고, 실패 시(리눅스 WebKitGTK에서 H.264/AAC가 흔한 경우) 시스템 **ffmpeg**로 트랜스코드한 same-origin 스트림(VP8/Opus WebM 또는 Opus Ogg)으로 폴백합니다. 폴백에는 `ffmpeg` 설치가 필요합니다. 리눅스 패키지는 네이티브 디코드를 위해 GStreamer libav/플러그인도 *recommends* 합니다. 암호화·멀티볼륨 아카이브는 지원하지 않습니다. 여러 파일을 드롭하면 토스트로 거부됩니다.
+`testdata/reader-fixture/`와 `testdata/media-fixture/`는 정지 이미지, 애니메이션 GIF, 짧은 WebM/MP4/MOV 샘플을 폴더·CBZ·7z·CBR 소스로 제공합니다. `testdata/docs-fixture/`에는 샘플 PDF와 Markdown이 있습니다. 단독 미디어/문서 파일은 1페이지(또는 다중 페이지 PDF) **Media** 소스로 열립니다. 동영상/오디오 폴백 체인: (1) 호스트 WebView 코덱, (2) 시스템 **ffmpeg** → same-origin VP8/Opus WebM 또는 Opus Ogg(데스크톱 PATH가 짧을 때 공통 경로·`$FFMPEG`도 탐색), (3) 번들 **ffmpeg.wasm**(core ~32 MiB, lazy, 미디어 ≤48 MiB). 리눅스 패키지는 네이티브/호스트 경로용 GStreamer libav/플러그인·`ffmpeg`를 *recommends* 합니다. 암호화·멀티볼륨 아카이브는 지원하지 않습니다. 여러 파일을 드롭하면 토스트로 거부됩니다.
+
+## Linux 동영상 코덱 (H.264 / AAC)
+
+VLC는 되고 Komika WebView만 안 되는 경우가 흔함. VLC=자체 코덱, Komika=**WebKitGTK → GStreamer**.
+
+| 실행 | 설명 |
+|------|------|
+| `bin/komika` / 네이티브 패키지 (`.deb` / `.rpm` / AUR) | **호스트** GStreamer 사용. 아래 패키지 설치. |
+| AppImage | 최소 GStreamer 플러그인+scanner를 번들(`inject-gst-plugins.sh`). `task package`로 재빌드 필요. |
+
+**배포판별 패키지** (unbundled/패키지 설치용; AppImage **빌드 호스트**에도 동일 패키지가 있어야 inject가 플러그인을 복사함):
+
+**Debian / Ubuntu**
+
+```bash
+# WebView H.264/AAC에 필요
+sudo apt install gstreamer1.0-libav gstreamer1.0-plugins-good
+# 권장
+sudo apt install gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly gstreamer1.0-tools ffmpeg
+```
+
+**Fedora**
+
+```bash
+# 필요 (WebView H.264/AAC / GStreamer)
+sudo dnf install gstreamer1-plugin-libav gstreamer1-plugins-good
+# 권장 (Fedora 기본 저장소 — 제한 코덱 빌드 ffmpeg-free)
+sudo dnf install gstreamer1-plugins-base gstreamer1-plugins-bad-free \
+  gstreamer1-plugins-ugly-free gstreamer1-plugins-base-tools ffmpeg-free
+```
+
+완전한 `ffmpeg`(추가 코덱)는 [RPM Fusion](https://rpmfusion.org/Configuration) 활성화 후 **교체** 설치 (`ffmpeg-free`와 동시 설치 금지):
+
+```bash
+sudo dnf swap ffmpeg-free ffmpeg --allowerasing
+```
+
+
+**Arch Linux**
+
+```bash
+# 필요
+sudo pacman -S gst-libav gst-plugins-good
+# 권장
+sudo pacman -S gst-plugins-base gst-plugins-bad gst-plugins-ugly \
+  gstreamer ffmpeg
+```
+
+**선택 확인**:
+
+```bash
+gst-inspect-1.0 avdec_h264 >/dev/null && gst-inspect-1.0 avdec_aac >/dev/null && echo GST_CODECS_OK
+```
+
+네이티브 패키지는 **필요** 세트(`libav` + `plugins-good` 계열)를 hard depends로 넣습니다. WebView가 여전히 못 풀 때를 위해 `ffmpeg` 폴백을 recommends로 둡니다.
+
 
 ## 프로젝트 구조
 

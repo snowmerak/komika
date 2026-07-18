@@ -669,15 +669,15 @@ try {
   // --- mediaPlaybackFallbackMessage ---
   assert.match(
     mediaPlaybackFallbackMessage(new Error("ffmpeg not found on PATH"), "video"),
-    /Install ffmpeg/
+    /gstreamer1\.0-libav|ffmpeg/
   );
   assert.match(
     mediaPlaybackFallbackMessage(new Error("ffmpeg not found on PATH"), "audio"),
-    /Install ffmpeg/
+    /gstreamer1\.0-libav|ffmpeg/
   );
-  assert.equal(
+  assert.match(
     mediaPlaybackFallbackMessage(null, "video"),
-    "This video format or codec is not supported on this device."
+    /gstreamer1\.0-libav|not supported/
   );
   assert.equal(
     mediaPlaybackFallbackMessage(new Error("boom"), "audio"),

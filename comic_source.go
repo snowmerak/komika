@@ -68,6 +68,7 @@ var (
 type PageDescriptor struct {
 	Mime         string `json:"mime"`
 	Delivery     string `json:"delivery"` // "rpc" | "stream"
+	SizeBytes    int64  `json:"sizeBytes,omitempty"`
 	DocumentPage int    `json:"documentPage,omitempty"` // 1-based; omit/0 if not multi-page doc
 	DocumentKey  string `json:"documentKey,omitempty"`
 }
@@ -586,6 +587,7 @@ func pageDescriptorFromEntry(e pageEntry) PageDescriptor {
 	return PageDescriptor{
 		Mime:         e.mime,
 		Delivery:     deliveryForSize(e.sizeBytes),
+		SizeBytes:    e.sizeBytes,
 		DocumentPage: e.documentPage,
 		DocumentKey:  e.documentKey,
 	}

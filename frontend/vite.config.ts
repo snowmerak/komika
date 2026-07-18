@@ -9,4 +9,12 @@ export default defineConfig({
     strictPort: true,
   },
   plugins: [wails("./bindings")],
+  // Bundle local @ffmpeg/core wasm/js for offline host-independent fallback.
+  assetsInclude: ["**/*.wasm", "**/*.mp4"],
+  optimizeDeps: {
+    exclude: ["@ffmpeg/ffmpeg", "@ffmpeg/util", "@ffmpeg/core"],
+  },
+  worker: {
+    format: "es",
+  },
 });

@@ -1,6 +1,6 @@
 # Komika
 
-CBZ/ZIP、CBR/RAR、CB7/7z アーカイブ、画像/動画/音声フォルダ、および単独の PDF / Markdown 向けのローカル優先コミックリーダーです。[Wails v3](https://v3.wails.io/)（Go バックエンド + TypeScript フロントエンド）で構築されています。
+CBZ/ZIP、CBR/RAR、CB7/7z アーカイブ、画像/動画/音声: ホスト WebView コーデック優先（Linux WebKitGTK は **GStreamer** libav/good/bad/ugly — deb 依存）。フォールバック: システム **ffmpeg**（PATH/`$FFMPEG`、≤12 MiB は wasm 可）。VLC 可・WebView 不可なら GStreamer/WebKit 経路の可能性。`.deb` またはホスト `ffmpeg` フォールバックを検討。
 
 **言語:** [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
@@ -110,7 +110,64 @@ wails3 task test
 
 バインディングと本番フロントバンドルは `wails3 task build` の過程で再生成されます。
 
-`testdata/reader-fixture/` と `testdata/media-fixture/` は静止画、アニメ GIF、短い WebM/MP4/MOV サンプルをフォルダ・CBZ・7z・CBR ソースとして提供します。`testdata/docs-fixture/` にはサンプル PDF と Markdown があります。単独メディア/ドキュメントファイルは 1 ページ（または複数ページ PDF）の **Media** ソースとして開きます。動画/音声はまずホスト WebView のコーデックスタックで再生し、失敗時（Linux WebKitGTK で H.264/AAC が典型）はシステム **ffmpeg** でトランスコードした same-origin ストリーム（VP8/Opus WebM または Opus Ogg）にフォールバックします。フォールバックには `ffmpeg` のインストールが必要です。Linux パッケージはネイティブデコード用に GStreamer libav/プラグインも *recommends* します。暗号化・マルチボリュームアーカイブは未対応です。複数ファイルのドロップはトーストで拒否されます。
+`testdata/reader-fixture/` と `testdata/media-fixture/` は静止画、アニメ GIF、短い WebM/MP4/MOV サンプルをフォルダ・CBZ・7z・CBR ソースとして提供します。`testdata/docs-fixture/` にはサンプル PDF と Markdown があります。単独メディア/ドキュメントファイルは 1 ページ（または複数ページ PDF）の **Media** ソースとして開きます。動画/音声のフォールバック連鎖: (1) ホスト WebView コーデック、(2) システム **ffmpeg** → same-origin VP8/Opus WebM または Opus Ogg（デスクトップ PATH が短い場合は共通パス・`$FFMPEG` も探索）、(3) 同梱 **ffmpeg.wasm**（core 約 32 MiB・lazy・メディア ≤48 MiB）。Linux パッケージはネイティブ/ホスト経路用に GStreamer libav/プラグインと `ffmpeg` も *recommends* します。暗号化・マルチボリュームアーカイブは未対応です。複数ファイルのドロップはトーストで拒否されます。
+
+## Linux の動画コーデック (H.264 / AAC)
+
+VLC では再生できても Komika の WebView だけ失敗することがあります。VLC=独自コーデック、Komika=**WebKitGTK → GStreamer**。
+
+| 実行 | 説明 |
+|------|------|
+| `bin/komika` / ネイティブパッケージ (`.deb` / `.rpm` / AUR) | **ホスト** GStreamer。下記パッケージを導入。 |
+| AppImage | 最小 GStreamer プラグイン+scanner を同梱（`inject-gst-plugins.sh`）。`task package` で再ビルドが必要。 |
+
+**ディストリ別パッケージ**（unbundled/パッケージ用。AppImage **ビルドホスト**にも同じものが必要で、inject がプラグインをコピーします）:
+
+**Debian / Ubuntu**
+
+```bash
+# WebView H.264/AAC に必要
+sudo apt install gstreamer1.0-libav gstreamer1.0-plugins-good
+# 推奨
+sudo apt install gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly gstreamer1.0-tools ffmpeg
+```
+
+**Fedora**
+
+```bash
+# 必要（WebView H.264/AAC / GStreamer）
+sudo dnf install gstreamer1-plugin-libav gstreamer1-plugins-good
+# 推奨（Fedora 公式リポジトリ — 制限付きビルド ffmpeg-free）
+sudo dnf install gstreamer1-plugins-base gstreamer1-plugins-bad-free \
+  gstreamer1-plugins-ugly-free gstreamer1-plugins-base-tools ffmpeg-free
+```
+
+フル機能の `ffmpeg`（追加コーデック）は [RPM Fusion](https://rpmfusion.org/Configuration) 有効化後に **入れ替え**（`ffmpeg-free` と併存させない）:
+
+```bash
+sudo dnf swap ffmpeg-free ffmpeg --allowerasing
+```
+
+
+**Arch Linux**
+
+```bash
+# 必要
+sudo pacman -S gst-libav gst-plugins-good
+# 推奨
+sudo pacman -S gst-plugins-base gst-plugins-bad gst-plugins-ugly \
+  gstreamer ffmpeg
+```
+
+**任意チェック**:
+
+```bash
+gst-inspect-1.0 avdec_h264 >/dev/null && gst-inspect-1.0 avdec_aac >/dev/null && echo GST_CODECS_OK
+```
+
+ネイティブパッケージは **必須** セット（`libav` + `plugins-good` 系）を hard depends にします。WebView で解けない場合の `ffmpeg` フォールバックは recommends です。
+
 
 ## プロジェクト構成
 

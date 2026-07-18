@@ -62,6 +62,7 @@ export interface PageDescriptor {
      * "rpc" | "stream"
      */
     "delivery": string;
+    "sizeBytes"?: number;
 
     /**
      * 1-based; omit/0 if not multi-page doc

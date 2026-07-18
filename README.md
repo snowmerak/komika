@@ -42,6 +42,65 @@ Preferences for view mode/stretch/image scaling and toolbar collapse are stored 
 - [Wails v3](https://v3.wails.io/) CLI (`wails3`)
 - [Task](https://taskfile.dev/) is **not** required separately: use `wails3 task …`, which runs the repo `Taskfile.yml` graph
 
+### Linux video codecs (H.264 / AAC)
+
+VLC can play a file while Komika cannot: VLC uses its own codecs; Komika uses **WebKitGTK → GStreamer**.
+
+| Runtime | Notes |
+|---------|--------|
+| `bin/komika` / native packages (`.deb` / `.rpm` / AUR) | Uses **host** GStreamer. Install the packages below for H.264/AAC. |
+| AppImage | Bundles a minimal GStreamer plugin set + scanner (via `inject-gst-plugins.sh` after `wails3 generate appimage`). Rebuild with `task package` / `wails3 task package` so plugins are included. |
+
+**Package names by distro** (runtime for unbundled / package installs; also needed on the **AppImage build host** so inject can copy plugins):
+
+**Debian / Ubuntu**
+
+```bash
+# required for WebView H.264/AAC
+sudo apt install gstreamer1.0-libav gstreamer1.0-plugins-good
+# recommended
+sudo apt install gstreamer1.0-plugins-base gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly gstreamer1.0-tools ffmpeg
+```
+
+**Fedora**
+
+```bash
+# required (WebView H.264/AAC via GStreamer)
+sudo dnf install gstreamer1-plugin-libav gstreamer1-plugins-good
+# recommended (default Fedora repos — limited ffmpeg build)
+sudo dnf install gstreamer1-plugins-base gstreamer1-plugins-bad-free \
+  gstreamer1-plugins-ugly-free gstreamer1-plugins-base-tools ffmpeg-free
+```
+
+For a fuller `ffmpeg` (and some extra codecs) enable [RPM Fusion](https://rpmfusion.org/Configuration), then **swap** (do not install alongside `ffmpeg-free`):
+
+```bash
+sudo dnf swap ffmpeg-free ffmpeg --allowerasing
+```
+
+
+**Arch Linux**
+
+```bash
+# required
+sudo pacman -S gst-libav gst-plugins-good
+# recommended
+sudo pacman -S gst-plugins-base gst-plugins-bad gst-plugins-ugly \
+  gstreamer ffmpeg
+```
+
+**Optional check** (any distro with `gst-launch-1.0` / `gst-inspect-1.0`):
+
+```bash
+gst-inspect-1.0 avdec_h264 >/dev/null && gst-inspect-1.0 avdec_aac >/dev/null && echo GST_CODECS_OK
+gst-launch-1.0 -q playbin uri=file://$PWD/testdata/media-fixture/8-video.mp4 \
+  video-sink=fakesink audio-sink=fakesink && echo GST_PLAY_OK
+```
+
+Native packages declare hard depends on the **required** set (`libav` + `plugins-good` / distro equivalents). `ffmpeg` is recommended for host transcoder fallback when WebView still cannot decode a clip.
+
+
 ## Supported platforms
 
 - Windows (amd64, arm64)
@@ -109,7 +168,7 @@ wails3 task test
 
 Bindings and the production frontend bundle are regenerated as part of `wails3 task build`.
 
-Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover still images, animated GIF, and short WebM/MP4/MOV samples as folder, CBZ, 7z, and CBR sources. `testdata/docs-fixture/` holds sample PDF and Markdown. Standalone media/document files open as one-page (or multi-page PDF) **Media** sources. Video/audio first uses the host WebView codec stack; if playback fails (common for H.264/AAC on Linux WebKitGTK), Komika falls back to a same-origin stream transcoded by system **ffmpeg** (VP8/Opus WebM or Opus Ogg). Install `ffmpeg` for that fallback. Linux packages also *recommend* GStreamer libav/plugins for native decode. Encrypted and multi-volume archives are not supported. Dropping multiple files is rejected with a toast.
+Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover still images, animated GIF, and short WebM/MP4/MOV samples as folder, CBZ, 7z, and CBR sources. `testdata/docs-fixture/` holds sample PDF and Markdown. Standalone media/document files open as one-page (or multi-page PDF) **Media** sources. Video/audio: host WebView codecs first (Linux WebKitGTK needs **GStreamer** libav + good/bad/ugly for H.264/AAC — installed as package **depends** on deb/rpm). Fallback: system **ffmpeg** transcoder (`PATH` / `$FFMPEG` / common paths; small clips ≤12 MiB may use bundled **ffmpeg.wasm**). If WebView fails while VLC works, install GStreamer libav/good (and ffmpeg); AppImage builds can still miss host plugins — then use host `ffmpeg` fallback or a native `.deb`. Encrypted and multi-volume archives are not supported. Dropping multiple files is rejected with a toast.
 
 ## Project layout
 
