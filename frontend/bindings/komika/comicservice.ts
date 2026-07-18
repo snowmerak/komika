@@ -58,6 +58,18 @@ export function GetPageStream(index: number): $CancellablePromise<$models.PageSt
 }
 
 /**
+ * GetTranscodedStream transcodes a video/audio page to a WebView-friendly format
+ * via system ffmpeg and returns a same-origin capability URL.
+ * 
+ * Reads the active comic source directly (page index only — no client upload).
+ * Holds a source lease for the whole encode so archive handles stay valid.
+ * Small RPC-delivery pages are supported (does not go through GetPageStream).
+ */
+export function GetTranscodedStream(index: number): $CancellablePromise<$models.PageStream | null> {
+    return $Call.ByID(2930947057, index);
+}
+
+/**
  * InstallDesktopIntegration registers user-level .desktop + comic MIME entries on Linux.
  */
 export function InstallDesktopIntegration(): $CancellablePromise<$models.DesktopIntegrationStatus> {

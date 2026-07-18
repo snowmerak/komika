@@ -92,6 +92,11 @@ export interface PageStream {
      * opaque capability; never a path or page index
      */
     "token": string;
+
+    /**
+     * optional resolved MIME (e.g. after transcode)
+     */
+    "mime"?: string;
 }
 
 /**

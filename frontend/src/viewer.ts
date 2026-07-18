@@ -279,6 +279,28 @@ export function releaseHtmlMediaElement(el: {
   el.load();
 }
 
+/** User-facing message when native play and ffmpeg fallback both fail. */
+export function mediaPlaybackFallbackMessage(err: unknown, kind: "video" | "audio"): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("ffmpeg not found") ||
+    lower.includes("executable file not found") ||
+    lower.includes("not found on path")
+  ) {
+    return kind === "video"
+      ? "This video codec is not supported here. Install ffmpeg to enable fallback playback."
+      : "This audio codec is not supported here. Install ffmpeg to enable fallback playback.";
+  }
+  if (raw.trim() !== "") {
+    return raw;
+  }
+  return kind === "video"
+    ? "This video format or codec is not supported on this device."
+    : "This audio format or codec is not supported on this device.";
+}
+
+
 /** Whether loadPages should fetch this index given delivery/kind and visibility. */
 export function shouldLoadMediaDelivery(
   delivery: string | undefined,

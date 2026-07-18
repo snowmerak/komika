@@ -31,8 +31,9 @@ var (
 
 // PageStream is the bridge-visible capability URL for oversized media.
 type PageStream struct {
-	URL   string `json:"url"`   // relative: "/media/<token>"
-	Token string `json:"token"` // opaque capability; never a path or page index
+	URL   string `json:"url"`             // relative: "/media/<token>"
+	Token string `json:"token"`           // opaque capability; never a path or page index
+	Mime  string `json:"mime,omitempty"` // optional resolved MIME (e.g. after transcode)
 }
 
 type sourceSlot struct {
@@ -96,6 +97,7 @@ func (s *ComicService) retireActiveLocked() {
 		return
 	}
 	s.invalidateStreamsLocked()
+	s.invalidateTranscodeCacheLocked()
 	old := s.active
 	old.retired = true
 	s.active = nil

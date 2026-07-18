@@ -110,7 +110,7 @@ wails3 task test
 
 바인딩과 프로덕션 프론트 번들은 `wails3 task build` 과정에서 재생성됩니다.
 
-`testdata/reader-fixture/`와 `testdata/media-fixture/`는 정지 이미지, 애니메이션 GIF, 짧은 WebM/MP4/MOV 샘플을 폴더·CBZ·7z·CBR 소스로 제공합니다. `testdata/docs-fixture/`에는 샘플 PDF와 Markdown이 있습니다. 단독 미디어/문서 파일은 1페이지(또는 다중 페이지 PDF) **Media** 소스로 열립니다. 동영상/오디오 재생은 호스트 WebView 코덱 스택(예: H.264/AAC, VP9/Vorbis)에 의존하며, 미지원 코덱은 리더 내 오류 카드를 표시합니다. 암호화·멀티볼륨 아카이브는 지원하지 않습니다. 여러 파일을 드롭하면 토스트로 거부됩니다.
+`testdata/reader-fixture/`와 `testdata/media-fixture/`는 정지 이미지, 애니메이션 GIF, 짧은 WebM/MP4/MOV 샘플을 폴더·CBZ·7z·CBR 소스로 제공합니다. `testdata/docs-fixture/`에는 샘플 PDF와 Markdown이 있습니다. 단독 미디어/문서 파일은 1페이지(또는 다중 페이지 PDF) **Media** 소스로 열립니다. 동영상/오디오는 먼저 호스트 WebView 코덱 스택으로 재생하고, 실패 시(리눅스 WebKitGTK에서 H.264/AAC가 흔한 경우) 시스템 **ffmpeg**로 트랜스코드한 same-origin 스트림(VP8/Opus WebM 또는 Opus Ogg)으로 폴백합니다. 폴백에는 `ffmpeg` 설치가 필요합니다. 리눅스 패키지는 네이티브 디코드를 위해 GStreamer libav/플러그인도 *recommends* 합니다. 암호화·멀티볼륨 아카이브는 지원하지 않습니다. 여러 파일을 드롭하면 토스트로 거부됩니다.
 
 ## 프로젝트 구조
 
@@ -120,6 +120,7 @@ wails3 task test
 | `comic_service.go` | Wails 브리지 (열기, 페이지, 라이브러리) |
 | `comic_source.go` | 아카이브/폴더/미디어/문서 페이지 소스 |
 | `media_stream.go` | same-origin 미디어 스트리밍 및 임시 추출 한도 |
+| `media_transcode.go` | WebView 미지원 코덱용 ffmpeg 폴백 트랜스코드 캐시 |
 | `library_store.go` | 최근 목록, 설정, TTL, 원자적 JSON |
 | `frontend/src/main.ts` | 라이브러리 UI + 모드별 리더 |
 | `frontend/src/viewer.ts` | 순수 뷰 연산 (스케일, 팬, 스프레드, 캐시, 미디어 종류) |

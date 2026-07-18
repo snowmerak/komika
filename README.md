@@ -109,7 +109,7 @@ wails3 task test
 
 Bindings and the production frontend bundle are regenerated as part of `wails3 task build`.
 
-Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover still images, animated GIF, and short WebM/MP4/MOV samples as folder, CBZ, 7z, and CBR sources. `testdata/docs-fixture/` holds sample PDF and Markdown. Standalone media/document files open as one-page (or multi-page PDF) **Media** sources. Video/audio playback depends on the host WebView codec stack (for example H.264/AAC and VP9/Vorbis); unsupported codecs show an in-reader error card. Encrypted and multi-volume archives are not supported. Dropping multiple files is rejected with a toast.
+Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover still images, animated GIF, and short WebM/MP4/MOV samples as folder, CBZ, 7z, and CBR sources. `testdata/docs-fixture/` holds sample PDF and Markdown. Standalone media/document files open as one-page (or multi-page PDF) **Media** sources. Video/audio first uses the host WebView codec stack; if playback fails (common for H.264/AAC on Linux WebKitGTK), Komika falls back to a same-origin stream transcoded by system **ffmpeg** (VP8/Opus WebM or Opus Ogg). Install `ffmpeg` for that fallback. Linux packages also *recommend* GStreamer libav/plugins for native decode. Encrypted and multi-volume archives are not supported. Dropping multiple files is rejected with a toast.
 
 ## Project layout
 
@@ -119,6 +119,7 @@ Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover st
 | `comic_service.go` | Wails bridge (open, pages, library) |
 | `comic_source.go` | Archive/folder/media/document page sources |
 | `media_stream.go` | Same-origin media streaming and temp extraction limits |
+| `media_transcode.go` | ffmpeg fallback transcode cache for unsupported WebView codecs |
 | `library_store.go` | Recent list, settings, TTL, atomic JSON |
 | `frontend/src/main.ts` | Library UI + mode-aware reader |
 | `frontend/src/viewer.ts` | Pure view math (scale, pan, spreads, cache, media kinds) |

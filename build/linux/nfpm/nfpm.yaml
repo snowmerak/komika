@@ -29,6 +29,14 @@ depends:
   - libgtk-4-1
   - libwebkitgtk-6.0-4
 
+# Soft deps: native WebView codecs + ffmpeg fallback for H.264/AAC on Linux.
+recommends:
+  - ffmpeg
+  - gstreamer1.0-libav
+  - gstreamer1.0-plugins-good
+  - gstreamer1.0-plugins-bad
+  - gstreamer1.0-plugins-ugly
+
 # Distribution-specific overrides for different package formats
 overrides:
   # RPM packages for Fedora / RHEL / AlmaLinux / Rocky Linux
@@ -36,6 +44,12 @@ overrides:
     depends:
       - gtk4
       - webkitgtk6.0
+    recommends:
+      - ffmpeg
+      - gstreamer1-libav
+      - gstreamer1-plugins-good
+      - gstreamer1-plugins-bad-free
+      - gstreamer1-plugins-ugly-free
 
   # Arch Linux packages
   archlinux:

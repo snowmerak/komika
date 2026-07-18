@@ -101,6 +101,7 @@ try {
     cacheIndices,
     orderPageLoadIndices,
     mediaKindForMime,
+    mediaPlaybackFallbackMessage,
     shouldLoadMediaDelivery,
     shouldRetainCachedMedia,
     shouldKeepWebtoonDomMedia,
@@ -664,6 +665,24 @@ try {
   assert.equal(mediaKindForMime("video/x-msvideo"), null);
   assert.equal(mediaKindForMime("application/octet-stream"), null);
   assert.equal(mediaKindForMime(""), null);
+
+  // --- mediaPlaybackFallbackMessage ---
+  assert.match(
+    mediaPlaybackFallbackMessage(new Error("ffmpeg not found on PATH"), "video"),
+    /Install ffmpeg/
+  );
+  assert.match(
+    mediaPlaybackFallbackMessage(new Error("ffmpeg not found on PATH"), "audio"),
+    /Install ffmpeg/
+  );
+  assert.equal(
+    mediaPlaybackFallbackMessage(null, "video"),
+    "This video format or codec is not supported on this device."
+  );
+  assert.equal(
+    mediaPlaybackFallbackMessage(new Error("boom"), "audio"),
+    "boom"
+  );
 
   // --- shouldLoadMediaDelivery ---
   // small RPC images may prefetch offscreen

@@ -110,7 +110,7 @@ wails3 task test
 
 バインディングと本番フロントバンドルは `wails3 task build` の過程で再生成されます。
 
-`testdata/reader-fixture/` と `testdata/media-fixture/` は静止画、アニメ GIF、短い WebM/MP4/MOV サンプルをフォルダ・CBZ・7z・CBR ソースとして提供します。`testdata/docs-fixture/` にはサンプル PDF と Markdown があります。単独メディア/ドキュメントファイルは 1 ページ（または複数ページ PDF）の **Media** ソースとして開きます。動画/音声再生はホスト WebView のコーデックスタック（例: H.264/AAC、VP9/Vorbis）に依存し、非対応コーデックはリーダー内のエラーカードを表示します。暗号化・マルチボリュームアーカイブは未対応です。複数ファイルのドロップはトーストで拒否されます。
+`testdata/reader-fixture/` と `testdata/media-fixture/` は静止画、アニメ GIF、短い WebM/MP4/MOV サンプルをフォルダ・CBZ・7z・CBR ソースとして提供します。`testdata/docs-fixture/` にはサンプル PDF と Markdown があります。単独メディア/ドキュメントファイルは 1 ページ（または複数ページ PDF）の **Media** ソースとして開きます。動画/音声はまずホスト WebView のコーデックスタックで再生し、失敗時（Linux WebKitGTK で H.264/AAC が典型）はシステム **ffmpeg** でトランスコードした same-origin ストリーム（VP8/Opus WebM または Opus Ogg）にフォールバックします。フォールバックには `ffmpeg` のインストールが必要です。Linux パッケージはネイティブデコード用に GStreamer libav/プラグインも *recommends* します。暗号化・マルチボリュームアーカイブは未対応です。複数ファイルのドロップはトーストで拒否されます。
 
 ## プロジェクト構成
 
@@ -120,6 +120,7 @@ wails3 task test
 | `comic_service.go` | Wails ブリッジ（オープン、ページ、ライブラリ） |
 | `comic_source.go` | アーカイブ/フォルダ/メディア/ドキュメントのページソース |
 | `media_stream.go` | same-origin メディアストリーミングと一時展開上限 |
+| `media_transcode.go` | WebView 非対応コーデック向け ffmpeg フォールバック変換キャッシュ |
 | `library_store.go` | 最近リスト、設定、TTL、原子的 JSON |
 | `frontend/src/main.ts` | ライブラリ UI + モード別リーダー |
 | `frontend/src/viewer.ts` | 純ビュー演算（スケール、パン、見開き、キャッシュ、メディア種別） |

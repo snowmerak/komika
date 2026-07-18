@@ -24,6 +24,12 @@ type ComicService struct {
 	maxArchiveTempBytes     int64
 	archiveTempBytes        int64
 	archiveTempPendingBytes int64
+
+	// ffmpeg transcode cache (WebView-friendly fallback for H.264/AAC etc.).
+	transcodeCache        map[string]*transcodeCacheEntry
+	transcodeInflight     map[string]*transcodeFlight
+	maxTranscodeTempBytes int64
+	transcodeTempBytes    int64
 }
 
 // NewComicService constructs the service with the default library store.
@@ -34,6 +40,7 @@ func NewComicService() (*ComicService, error) {
 	}
 	svc := &ComicService{store: store}
 	initStreamState(svc)
+	initTranscodeState(svc)
 	return svc, nil
 }
 
@@ -41,6 +48,7 @@ func NewComicService() (*ComicService, error) {
 func NewComicServiceWithStore(store *LibraryStore) *ComicService {
 	svc := &ComicService{store: store}
 	initStreamState(svc)
+	initTranscodeState(svc)
 	return svc
 }
 

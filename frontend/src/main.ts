@@ -11,6 +11,7 @@ import {
   computeBaseScale,
   loadViewPreferences,
   mediaKindForMime,
+  mediaPlaybackFallbackMessage,
   orderPageLoadIndices,
   saveViewPreferences,
   releaseHtmlMediaElement,
@@ -486,6 +487,7 @@ function attachMediaElement(
   media: CachedMedia,
   className: string,
   alt: string,
+  pageIndex: number,
   onSized: (size: Size) => void
 ): { el: HTMLElement; cleanup: () => void } {
   host.replaceChildren();
@@ -981,18 +983,6 @@ function attachMediaElement(
   }
 
   if (media.kind === "audio") {
-    const probe = document.createElement("audio");
-    if (probe.canPlayType(media.mime) === "") {
-      const card = makeUnavailableMediaCard(
-        "This audio format or codec is not supported on this device.",
-        media.url
-      );
-      card.className = `${className} ${card.className}`;
-      host.append(card);
-      onSized({ width: 16, height: 9 });
-      return { el: card, cleanup: () => {} };
-    }
-
     const shell = document.createElement("div");
     shell.className = `${className} reader__media reader__media--audio-shell`;
     shell.dataset.mediaUrl = media.url;
@@ -1004,44 +994,95 @@ function attachMediaElement(
     audio.preload = "metadata";
     audio.setAttribute("aria-label", alt);
 
-    const onMeta = (): void => {
-      // Audio has no intrinsic pixel size; keep fit/zoom paths stable.
-      onSized({ width: 16, height: 9 });
-    };
-    const onError = (): void => {
-      const card = makeUnavailableMediaCard("This media is unavailable.", media.url);
+    let disposed = false;
+    let fallbackAttempted = false;
+    let fallingBack = false;
+
+    const showAudioError = (message: string): void => {
+      if (disposed) return;
+      const card = makeUnavailableMediaCard(message, media.url);
       card.className = `${className} ${card.className}`;
       host.replaceChildren(card);
       onSized({ width: 16, height: 9 });
     };
+
+    const onMeta = (): void => {
+      onSized({ width: 16, height: 9 });
+    };
+
+    const tryTranscodeFallback = (): void => {
+      if (disposed || fallingBack || fallbackAttempted) return;
+      fallingBack = true;
+      fallbackAttempted = true;
+      if (pageIndex < 0) {
+        showAudioError(mediaPlaybackFallbackMessage(null, "audio"));
+        fallingBack = false;
+        return;
+      }
+      void ComicService.GetTranscodedStream(pageIndex)
+        .then((stream) => {
+          if (disposed) {
+            if (stream?.token) void ComicService.ReleasePageStream(stream.token).catch(() => {});
+            return;
+          }
+          if (!stream?.url || !stream.token) {
+            showAudioError(mediaPlaybackFallbackMessage(null, "audio"));
+            return;
+          }
+          // Drop original blob/stream once we own a fallback token.
+          if (media.delivery === "blob") {
+            URL.revokeObjectURL(media.url);
+          } else if (media.streamToken) {
+            void ComicService.ReleasePageStream(media.streamToken).catch(() => {});
+          }
+          media.url = stream.url;
+          media.mime = stream.mime || "audio/ogg";
+          media.delivery = "stream";
+          media.streamToken = stream.token;
+          shell.dataset.mediaUrl = media.url;
+          audio.src = media.url;
+          audio.load();
+        })
+        .catch((err) => {
+          if (disposed) return;
+          showAudioError(mediaPlaybackFallbackMessage(err, "audio"));
+        })
+        .finally(() => {
+          fallingBack = false;
+        });
+    };
+
+    const onError = (): void => {
+      if (disposed || fallingBack) return;
+      if (!fallbackAttempted) {
+        tryTranscodeFallback();
+        return;
+      }
+      showAudioError("This media is unavailable.");
+    };
+
     audio.addEventListener("loadedmetadata", onMeta);
     audio.addEventListener("error", onError);
-    audio.src = media.url;
+
+    const rejected = document.createElement("audio").canPlayType(media.mime) === "";
+    if (rejected) {
+      tryTranscodeFallback();
+    } else {
+      audio.src = media.url;
+    }
+
     shell.append(audio);
     host.append(shell);
-    // Size immediately so layout does not wait on metadata for audio-only.
     onSized({ width: 16, height: 9 });
     return {
       el: shell,
       cleanup: () => {
+        disposed = true;
         audio.removeEventListener("loadedmetadata", onMeta);
         audio.removeEventListener("error", onError);
         releaseHtmlMediaElement(audio);
       },
     };
-  }
-
-
-  const probe = document.createElement("video");
-  if (probe.canPlayType(media.mime) === "") {
-    const card = makeUnavailableMediaCard(
-      "This video format or codec is not supported on this device.",
-      media.url
-    );
-    card.className = `${className} ${card.className}`;
-    host.append(card);
-    onSized({ width: 16, height: 9 });
-    return { el: card, cleanup: () => {} };
   }
 
   const video = document.createElement("video");
@@ -1055,17 +1096,75 @@ function attachMediaElement(
   video.setAttribute("aria-label", alt);
   video.dataset.mediaUrl = media.url;
 
+  let disposed = false;
+  let fallbackAttempted = false;
+  let fallingBack = false;
+
+  const showVideoError = (message: string): void => {
+    if (disposed) return;
+    const card = makeUnavailableMediaCard(message, media.url);
+    card.className = `${className} ${card.className}`;
+    host.replaceChildren(card);
+    onSized({ width: 16, height: 9 });
+  };
+
   const onMeta = (): void => {
     if (video.videoWidth > 0 && video.videoHeight > 0) {
       onSized({ width: video.videoWidth, height: video.videoHeight });
     }
   };
-  const onError = (): void => {
-    const card = makeUnavailableMediaCard("This media is unavailable.", media.url);
-    card.className = `${className} ${card.className}`;
-    host.replaceChildren(card);
-    onSized({ width: 16, height: 9 });
+
+  const tryTranscodeFallback = (): void => {
+    if (disposed || fallingBack || fallbackAttempted) return;
+    fallingBack = true;
+    fallbackAttempted = true;
+    if (pageIndex < 0) {
+      showVideoError(mediaPlaybackFallbackMessage(null, "video"));
+      fallingBack = false;
+      return;
+    }
+    void ComicService.GetTranscodedStream(pageIndex)
+      .then((stream) => {
+        if (disposed) {
+          if (stream?.token) void ComicService.ReleasePageStream(stream.token).catch(() => {});
+          return;
+        }
+        if (!stream?.url || !stream.token) {
+          showVideoError(mediaPlaybackFallbackMessage(null, "video"));
+          return;
+        }
+        if (media.delivery === "blob") {
+          URL.revokeObjectURL(media.url);
+        } else if (media.streamToken) {
+          void ComicService.ReleasePageStream(media.streamToken).catch(() => {});
+        }
+        media.url = stream.url;
+        media.mime = stream.mime || "video/webm";
+        media.delivery = "stream";
+        media.streamToken = stream.token;
+        video.dataset.mediaUrl = media.url;
+        video.src = media.url;
+        video.load();
+        void video.play().catch(() => {});
+      })
+      .catch((err) => {
+        if (disposed) return;
+        showVideoError(mediaPlaybackFallbackMessage(err, "video"));
+      })
+      .finally(() => {
+        fallingBack = false;
+      });
   };
+
+  const onError = (): void => {
+    if (disposed || fallingBack) return;
+    if (!fallbackAttempted) {
+      tryTranscodeFallback();
+      return;
+    }
+    showVideoError("This media is unavailable.");
+  };
+
   // Autoplay stays muted; first user gesture enables audio.
   const unmuteOnGesture = (): void => {
     video.muted = false;
@@ -1073,12 +1172,20 @@ function attachMediaElement(
   video.addEventListener("loadedmetadata", onMeta);
   video.addEventListener("error", onError);
   video.addEventListener("pointerdown", unmuteOnGesture, { once: true });
-  video.src = media.url;
-  void video.play().catch(() => {});
+
+  const rejected = document.createElement("video").canPlayType(media.mime) === "";
+  if (rejected) {
+    tryTranscodeFallback();
+  } else {
+    video.src = media.url;
+    void video.play().catch(() => {});
+  }
+
   host.append(video);
   return {
     el: video,
     cleanup: () => {
+      disposed = true;
       video.removeEventListener("loadedmetadata", onMeta);
       video.removeEventListener("error", onError);
       video.removeEventListener("pointerdown", unmuteOnGesture);
@@ -2318,6 +2425,7 @@ function mountSingleReader(
       media,
       "reader__media--single",
       `Page ${state.pageIndex + 1}`,
+      state.pageIndex,
       (size) => {
         natural = size;
         applyTransform();
@@ -2629,6 +2737,7 @@ function mountSpreadReader(
           media0,
           "reader__media--spread",
           `Page ${pages[0]! + 1}`,
+          pages[0]!,
           (size) => {
             naturalPages[0] = size;
             if (naturalPages.filter(Boolean).length === currentSpread().length) applyTransform();
@@ -2644,6 +2753,7 @@ function mountSpreadReader(
             media1,
             "reader__media--spread",
             `Page ${pages[1] + 1}`,
+            pages[1],
             (size) => {
               naturalPages[1] = size;
               if (naturalPages.filter(Boolean).length === currentSpread().length) applyTransform();
@@ -2733,6 +2843,7 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
         media,
         "reader__webtoon-media",
         `Page ${i + 1}`,
+        i,
         (size) => {
           // Markdown reflows; never lock an image-style ratio box.
           if (media.kind === "markdown") {
