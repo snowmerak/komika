@@ -1,0 +1,305 @@
+:root {
+  --site-max: 1120px;
+  --site-gutter: clamp(1.25rem, 3vw, 2rem);
+  --site-nav-h: 4rem;
+}
+
+body {
+  color: var(--mp-text-primary);
+  font-family: var(--font-sans, "Segoe UI", system-ui, sans-serif);
+  line-height: 1.55;
+}
+
+.site-skip {
+  position: absolute;
+  left: var(--space-3);
+  top: -3rem;
+  z-index: 100;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: var(--mp-accent-strong);
+  color: var(--mp-text-inverse);
+  font-weight: 650;
+}
+
+.site-skip:focus {
+  top: var(--space-3);
+}
+
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--site-nav-h);
+  padding: 0.65rem var(--site-gutter);
+  border-bottom: 1px solid var(--mp-line-soft);
+  background: color-mix(in srgb, var(--mp-bg-canvas) 88%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.site-nav__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--mp-text-primary);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+
+.site-nav__brand:hover {
+  color: var(--mp-text-primary);
+}
+
+.site-nav__mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  object-fit: cover;
+  box-shadow: var(--mp-shadow-soft);
+}
+
+.site-nav__name {
+  font-size: 1.05rem;
+}
+
+.site-nav__links {
+  display: none;
+  flex: 1;
+  justify-content: center;
+  gap: 1.25rem;
+  font-size: 0.92rem;
+}
+
+.site-nav__links a {
+  color: var(--mp-text-secondary);
+}
+
+.site-nav__links a:hover {
+  color: var(--mp-text-primary);
+}
+
+.site-nav__actions {
+  margin-left: auto;
+}
+
+.site-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(240px, 0.85fr);
+  gap: clamp(2rem, 5vw, 4rem);
+  align-items: center;
+  max-width: var(--site-max);
+  margin: 0 auto;
+  padding: clamp(2.5rem, 6vw, 5rem) var(--site-gutter) clamp(3rem, 7vw, 5.5rem);
+}
+
+.site-hero__copy h1 {
+  margin: 0.55rem 0 1rem;
+  font-size: clamp(2rem, 4.4vw, 3.15rem);
+  font-weight: 780;
+  letter-spacing: -0.035em;
+  line-height: 1.12;
+}
+
+.site-hero__lead {
+  max-width: 40rem;
+  margin: 0 0 1.25rem;
+  font-size: 1.05rem;
+}
+
+.site-hero__badges {
+  margin-bottom: 1.35rem;
+}
+
+.site-hero__brand {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 280px;
+}
+
+.site-hero__glow {
+  position: absolute;
+  inset: 12% 8%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 35%, rgb(from var(--mp-accent-200) r g b / 0.28), transparent 58%),
+    radial-gradient(circle at 70% 65%, rgb(from var(--mp-accent-500) r g b / 0.16), transparent 55%);
+  filter: blur(8px);
+  pointer-events: none;
+}
+
+.site-hero__logo {
+  position: relative;
+  width: min(100%, 420px);
+  height: auto;
+  filter: drop-shadow(0 18px 40px rgb(0 0 0 / 0.35));
+}
+
+/* Brand art is drawn for light canvases — lift it on dark Merak surfaces. */
+.site-hero__logo,
+.site-nav__mark,
+.site-footer__brand img {
+  background: #f4f7fb;
+  border-radius: 18px;
+}
+
+.site-nav__mark,
+.site-footer__brand img {
+  border-radius: 10px;
+  padding: 2px;
+}
+
+.site-hero__logo {
+  padding: clamp(1rem, 3vw, 1.75rem);
+}
+
+.site-section {
+  max-width: var(--site-max);
+  margin: 0 auto;
+  padding: 0 var(--site-gutter) clamp(3rem, 7vw, 5rem);
+}
+
+.site-section .mp-section-heading {
+  margin-bottom: 1.5rem;
+}
+
+.site-section .mp-section-heading h2 {
+  margin: 0;
+  font-size: clamp(1.45rem, 2.4vw, 1.85rem);
+  letter-spacing: -0.02em;
+}
+
+.site-section .mp-section-heading p:last-child {
+  margin: 0;
+}
+
+.site-format-grid .mp-card__title {
+  font-size: 1.05rem;
+}
+
+.site-list {
+  margin: 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.site-list li::marker {
+  color: var(--mp-accent-line);
+}
+
+.site-code,
+.site-terminal code {
+  font-family: var(--font-mono, ui-monospace, "Cascadia Code", monospace);
+  font-size: 0.86em;
+}
+
+.site-code {
+  padding: 0.1em 0.35em;
+  border-radius: 6px;
+  background: var(--mp-bg-inset);
+  color: var(--mp-accent-soft);
+}
+
+.site-section--get {
+  padding-bottom: clamp(4rem, 8vw, 6rem);
+}
+
+.site-get {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.95fr);
+  gap: var(--space-5);
+  align-items: stretch;
+}
+
+.site-get__copy h2 {
+  margin: 0.4rem 0 0.75rem;
+  font-size: clamp(1.35rem, 2.2vw, 1.7rem);
+  letter-spacing: -0.02em;
+}
+
+.site-get__copy p {
+  margin: 0 0 1.1rem;
+}
+
+.site-terminal {
+  margin: 0;
+  padding: 1.1rem 1.2rem;
+  border-radius: var(--radius-md);
+  background: var(--mp-bg-inset);
+  box-shadow: inset 0 0 0 1px var(--mp-line-soft);
+  overflow: auto;
+  color: var(--mp-text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
+  max-width: var(--site-max);
+  margin: 0 auto;
+  padding: 1.5rem var(--site-gutter) 2.5rem;
+  border-top: 1px solid var(--mp-line-soft);
+}
+
+.site-footer__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 700;
+}
+
+.site-footer__meta {
+  flex: 1 1 220px;
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.site-footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+@media (min-width: 860px) {
+  .site-nav__links {
+    display: flex;
+  }
+}
+
+@media (max-width: 900px) {
+  .site-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .site-hero__brand {
+    order: -1;
+    min-height: 220px;
+  }
+
+  .site-hero__logo {
+    width: min(100%, 320px);
+  }
+
+  .site-get {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .site-nav__name {
+    display: none;
+  }
+
+  .site-nav__actions .mp-button--ghost {
+    display: none;
+  }
+}

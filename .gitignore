@@ -5,6 +5,8 @@
 bin/
 frontend/dist/
 frontend/node_modules/
+site/dist/
+site/node_modules/
 
 # Linux AppImage staging (binary copied from bin/ during package)
 build/linux/appimage/build/

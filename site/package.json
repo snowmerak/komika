@@ -1,0 +1,17 @@
+{
+  "name": "komika-site",
+  "private": true,
+  "version": "0.2.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "merak-protocol-design-system": "^0.2.3"
+  },
+  "devDependencies": {
+    "vite": "^8.0.5"
+  }
+}
