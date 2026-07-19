@@ -117,7 +117,9 @@ func (s *ComicService) promoteSourceLocked(src pageSource) {
 	}
 }
 
-// GetPageStream mints a same-origin capability URL for a stream-delivery page.
+// GetPageStream mints a same-origin capability URL for streaming media.
+// Images/PDF/markdown still require delivery=stream (size gate). Video/audio
+// always allowed so the reader never feeds WebKit a blob: of H.264.
 func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 	initStreamState(s)
 
@@ -132,7 +134,7 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 		return nil, errPageOutOfRange
 	}
 	desc := src.PageDescriptor(index)
-	if desc.Delivery != deliveryStream {
+	if desc.Delivery != deliveryStream && !forcesStreamDelivery(desc.Mime) {
 		return nil, errNotStreamPage
 	}
 
@@ -182,7 +184,6 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.active == nil || s.active.generation != slot.generation {
 		if temporary {
 			s.archiveTempBytes -= ownedBytes
@@ -191,6 +192,7 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 			}
 			_ = os.Remove(streamPath)
 		}
+		s.mu.Unlock()
 		return nil, errNoActiveComic
 	}
 
@@ -204,9 +206,16 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 		refs:       0,
 		retired:    false,
 	}
+	s.mu.Unlock()
 
+	url, err := s.mediaStreamURL(token)
+	if err != nil {
+		// Roll back the token entry (and temp file) if loopback HTTP cannot start.
+		_ = s.ReleasePageStream(token)
+		return nil, err
+	}
 	return &PageStream{
-		URL:   mediaPathPrefix + token,
+		URL:   url,
 		Token: token,
 	}, nil
 }
@@ -416,6 +425,7 @@ func (s *ComicService) releaseStreamEntry(entry *streamEntry) {
 
 // ServiceShutdown cleans up stream tokens and active source on app exit.
 func (s *ComicService) ServiceShutdown() error {
+	s.shutdownMediaHTTP()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.invalidateStreamsLocked()

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sync"
 
@@ -30,6 +31,11 @@ type ComicService struct {
 	transcodeInflight     map[string]*transcodeFlight
 	maxTranscodeTempBytes int64
 	transcodeTempBytes    int64
+
+	// Per-service loopback HTTP for Range media (WebKitGTK cannot use wails://).
+	mediaHTTPBase string
+	mediaHTTPSrv  *http.Server
+	mediaHTTPErr  error
 }
 
 // NewComicService constructs the service with the default library store.

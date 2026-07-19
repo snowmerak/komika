@@ -1219,6 +1219,8 @@ function attachMediaElement(
   let fallbackAbort: AbortController | null = null;
   let ownedWasmBlobUrl: string | null = null;
   let metaTimer: number | null = null;
+  /** True once native (or fallback) media has produced usable frames / time. */
+  let hadMeaningfulPlayback = false;
 
   const clearMetaTimer = (): void => {
     if (metaTimer != null) {
@@ -1239,7 +1241,20 @@ function attachMediaElement(
   const onMeta = (): void => {
     clearMetaTimer();
     if (video.videoWidth > 0 && video.videoHeight > 0) {
+      hadMeaningfulPlayback = true;
       onSized({ width: video.videoWidth, height: video.videoHeight });
+    }
+  };
+
+  const onPlaying = (): void => {
+    if (video.currentTime > 0 || video.videoWidth > 0) {
+      hadMeaningfulPlayback = true;
+    }
+  };
+
+  const onTimeUpdate = (): void => {
+    if (video.currentTime >= 0.2) {
+      hadMeaningfulPlayback = true;
     }
   };
 
@@ -1270,6 +1285,8 @@ function attachMediaElement(
     media.delivery = delivery;
     media.streamToken = token;
     video.dataset.mediaUrl = media.url;
+    // New source — wait for its own playback evidence.
+    hadMeaningfulPlayback = false;
     video.src = media.url;
     video.load();
     // Loading card may have replaced host children; remount the video element.
@@ -1302,57 +1319,173 @@ function attachMediaElement(
     onSized({ width: 16, height: 9 });
   };
 
-  const tryTranscodeFallback = (): void => {
-    if (disposed || fallingBack || fallbackAttempted) return;
-    fallingBack = true;
-    fallbackAttempted = true;
-    clearMetaTimer();
-    showVideoLoading("Preparing compatible video (system ffmpeg)…");
-    const finish = (): void => {
-      fallingBack = false;
+  const seekWhenReady = (startAt: number): void => {
+    if (!(startAt > 0) || !Number.isFinite(startAt)) return;
+    const doSeek = (): void => {
+      try {
+        const dur = video.duration;
+        if (Number.isFinite(dur) && startAt >= dur) {
+          video.currentTime = Math.max(0, dur - 0.05);
+        } else {
+          video.currentTime = startAt;
+        }
+      } catch {
+        /* ignore seek failures */
+      }
+      void video.play().catch(() => {});
     };
-    // Byte-size gate (fail closed when unknown): 1080p can be <32MiB RPC and still freeze wasm.
+    // readyState >= 1 (HAVE_METADATA): seek immediately; else wait (register BEFORE load()).
+    if (video.readyState >= 1) {
+      doSeek();
+      return;
+    }
+    video.addEventListener("loadedmetadata", doSeek, { once: true });
+  };
+
+  const applyHostStream = (
+    stream: { url?: string | null; token?: string | null; mime?: string | null },
+    startAt: number,
+    fallbackMime: string
+  ): boolean => {
+    if (!stream?.url || !stream.token) return false;
+    console.info("[komika] host stream ready", stream);
+    // Register seek listener before applyVideoSource triggers load().
+    if (startAt > 0) {
+      seekWhenReady(startAt);
+    }
+    applyVideoSource(stream.url, stream.mime || fallbackMime, "stream", stream.token);
+    return true;
+  };
+
+  /**
+   * Fallback ladder:
+   *  1) lossless clean MP4 remux (drop tmcd/data) — fast
+   *  2) WebM re-encode via host ffmpeg
+   *  3) optional wasm for tiny clips
+   * resumeAt seeks into the new stream after metadata.
+   */
+  const tryTranscodeFallback = (opts?: { stage?: "remux" | "reencode"; resumeAt?: number }): void => {
+    if (disposed || fallingBack) return;
+    const resumeAt = opts?.resumeAt && opts.resumeAt > 0 ? opts.resumeAt : 0;
+    const want: "remux" | "reencode" = opts?.stage ?? "remux";
+    // Don't go backwards on the ladder.
+    if (want === "remux" && fallbackStage !== "none") return;
+    if (want === "reencode" && (fallbackStage === "reencode" || fallbackStage === "done")) return;
+
+    fallingBack = true;
+    clearMetaTimer();
     const knownSize = typeof media.sizeBytes === "number" && media.sizeBytes > 0 ? media.sizeBytes : Infinity;
     const allowWasm =
       media.delivery !== "stream" &&
       pageIndex >= 0 &&
       knownSize <= WASM_TRANSCODE_MAX_BYTES;
+
+    const finish = (): void => {
+      fallingBack = false;
+    };
     if (pageIndex < 0) {
+      fallbackStage = "done";
       showVideoError("Missing page index for transcoder fallback.");
       finish();
       return;
     }
-    void ComicService.GetTranscodedStream(pageIndex)
-      .then(async (stream) => {
+
+    const runReencode = async (priorErr: unknown): Promise<void> => {
+      fallbackStage = "reencode";
+      showVideoLoading("Re-encoding with system ffmpeg (large 1080p clips can take a while)…");
+      try {
+        const stream = await ComicService.GetTranscodedStream(pageIndex);
         if (disposed) {
           if (stream?.token) void ComicService.ReleasePageStream(stream.token).catch(() => {});
           return;
         }
-        if (!stream?.url || !stream.token) {
-          if (allowWasm) await tryWasmVideoFallback(new Error("empty transcoder response"));
+        if (!applyHostStream(stream ?? {}, resumeAt, "video/webm")) {
+          fallbackStage = "done";
+          if (allowWasm) await tryWasmVideoFallback(priorErr ?? new Error("empty transcoder response"));
           else showVideoError("Transcoder returned an empty stream. Is ffmpeg installed?");
-          return;
         }
-        // Backend may include mime; surface resolved path via console for diagnostics.
-        console.info("[komika] host transcode ready", stream);
-        applyVideoSource(stream.url, stream.mime || "video/webm", "stream", stream.token);
-      })
-      .catch(async (err) => {
+      } catch (err) {
         if (disposed) return;
-        console.warn("[komika] host transcode failed", err);
-        if (allowWasm) {
-          await tryWasmVideoFallback(err);
+        console.warn("[komika] host reencode failed", err);
+        fallbackStage = "done";
+        if (allowWasm) await tryWasmVideoFallback(err);
+        else showVideoError(mediaPlaybackFallbackMessage(err, "video"));
+      }
+    };
+
+    const run = async (): Promise<void> => {
+      if (want === "remux") {
+        fallbackStage = "remux";
+        showVideoLoading("Cleaning container with system ffmpeg…");
+        try {
+          const stream = await ComicService.GetRemuxedStream(pageIndex);
+          if (disposed) {
+            if (stream?.token) void ComicService.ReleasePageStream(stream.token).catch(() => {});
+            return;
+          }
+          if (applyHostStream(stream ?? {}, resumeAt, "video/mp4")) {
+            return;
+          }
+          await runReencode(new Error("empty remux response"));
+          return;
+        } catch (err) {
+          console.warn("[komika] host remux failed, trying reencode", err);
+          await runReencode(err);
           return;
         }
-        showVideoError(mediaPlaybackFallbackMessage(err, "video"));
-      })
-      .finally(finish);
+      }
+      await runReencode(null);
+    };
+
+    void run().finally(finish);
   };
 
   const onError = (): void => {
     if (disposed || fallingBack) return;
-    if (!fallbackAttempted) {
-      tryTranscodeFallback();
+    const mediaErr = video.error;
+    const code = mediaErr?.code ?? 0;
+    // 1=ABORTED 2=NETWORK 3=DECODE 4=SRC_NOT_SUPPORTED
+    const detail = {
+      code,
+      message: mediaErr?.message ?? "",
+      networkState: video.networkState,
+      readyState: video.readyState,
+      currentTime: video.currentTime,
+      videoWidth: video.videoWidth,
+      hadMeaningfulPlayback,
+      fallbackStage,
+      src: media.url.slice(0, 80),
+    };
+    console.warn("[komika] video error", detail);
+
+    if (hadMeaningfulPlayback && code === 2 /* MEDIA_ERR_NETWORK */) {
+      showVideoError("Playback interrupted (network/stream error). Try reopening the page.");
+      return;
+    }
+
+    const resumeAt = video.currentTime > 0 ? video.currentTime : 0;
+
+    // Mid-play or early DECODE/unsupported: climb the fallback ladder.
+    if (code === 3 || code === 4 || code === 0) {
+      if (fallbackStage === "none") {
+        tryTranscodeFallback({ stage: "remux", resumeAt });
+        return;
+      }
+      if (fallbackStage === "remux") {
+        tryTranscodeFallback({ stage: "reencode", resumeAt });
+        return;
+      }
+      fallbackStage = "done";
+      showVideoError(
+        code === 4
+          ? "This media format is not supported after fallback."
+          : "Decoder failed after fallback. Try another file or install system codecs."
+      );
+      return;
+    }
+
+    if (fallbackStage === "none") {
+      tryTranscodeFallback({ stage: "remux", resumeAt: 0 });
       return;
     }
     showVideoError("This media is unavailable.");
@@ -1363,21 +1496,23 @@ function attachMediaElement(
     video.muted = false;
   };
   video.addEventListener("loadedmetadata", onMeta);
+  video.addEventListener("playing", onPlaying);
+  video.addEventListener("timeupdate", onTimeUpdate);
   video.addEventListener("error", onError);
   video.addEventListener("pointerdown", unmuteOnGesture, { once: true });
 
   // Bare video/mp4 often returns "maybe" without H.264; that path can stall WebKitGTK.
   const supported = hostLikelySupportsAV("video", media.mime);
   if (!supported) {
-    tryTranscodeFallback();
+    tryTranscodeFallback({ stage: "remux", resumeAt: 0 });
   } else {
     video.src = media.url;
     void video.play().catch(() => {});
     // If metadata never arrives (codec stall), force fallback.
     metaTimer = window.setTimeout(() => {
-      if (disposed || fallbackAttempted) return;
+      if (disposed || fallbackStage !== "none") return;
       if (video.videoWidth > 0 || video.readyState >= 1) return;
-      tryTranscodeFallback();
+      tryTranscodeFallback({ stage: "remux", resumeAt: 0 });
     }, 2500);
   }
 
@@ -1389,6 +1524,8 @@ function attachMediaElement(
       clearMetaTimer();
       fallbackAbort?.abort();
       video.removeEventListener("loadedmetadata", onMeta);
+      video.removeEventListener("playing", onPlaying);
+      video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("error", onError);
       video.removeEventListener("pointerdown", unmuteOnGesture);
       releaseHtmlMediaElement(video);
@@ -1661,7 +1798,9 @@ async function loadOnePage(index: number): Promise<CachedMedia | undefined> {
     }
   }
 
-  const delivery = desc?.delivery === "stream" ? "stream" : "rpc";
+  // Video/audio always use Range-capable /media streams (WebKitGTK blob: H.264 bug).
+  const forceStream = kind === "video" || kind === "audio";
+  const delivery = forceStream || desc?.delivery === "stream" ? "stream" : "rpc";
   let media: CachedMedia;
 
   if (delivery === "stream") {

@@ -446,6 +446,20 @@ func deliveryForSize(sizeBytes int64) string {
 	return deliveryRPC
 }
 
+// video/audio always stream: WebKitGTK fails on large H.264 blob: URLs even when
+// the same bytes play over HTTP (verified MiniBrowser A/B on 4K H.264).
+func deliveryForPage(mime string, sizeBytes int64) string {
+	if forcesStreamDelivery(mime) {
+		return deliveryStream
+	}
+	return deliveryForSize(sizeBytes)
+}
+
+func forcesStreamDelivery(mime string) bool {
+	lower := strings.ToLower(strings.TrimSpace(mime))
+	return strings.HasPrefix(lower, "video/") || strings.HasPrefix(lower, "audio/")
+}
+
 func (s *archiveSource) PageDescriptor(index int) PageDescriptor {
 	if index < 0 || index >= len(s.entries) {
 		return PageDescriptor{}
@@ -586,7 +600,7 @@ func mimeForName(name string) string {
 func pageDescriptorFromEntry(e pageEntry) PageDescriptor {
 	return PageDescriptor{
 		Mime:         e.mime,
-		Delivery:     deliveryForSize(e.sizeBytes),
+		Delivery:     deliveryForPage(e.mime, e.sizeBytes),
 		SizeBytes:    e.sizeBytes,
 		DocumentPage: e.documentPage,
 		DocumentKey:  e.documentKey,

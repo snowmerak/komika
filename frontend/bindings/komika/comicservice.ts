@@ -51,19 +51,24 @@ export function GetPage(index: number): $CancellablePromise<$models.PagePayload 
 }
 
 /**
- * GetPageStream mints a same-origin capability URL for a stream-delivery page.
+ * GetPageStream mints a same-origin capability URL for streaming media.
+ * Images/PDF/markdown still require delivery=stream (size gate). Video/audio
+ * always allowed so the reader never feeds WebKit a blob: of H.264.
  */
 export function GetPageStream(index: number): $CancellablePromise<$models.PageStream | null> {
     return $Call.ByID(2657797635, index);
 }
 
 /**
- * GetTranscodedStream transcodes a video/audio page to a WebView-friendly format
- * via system ffmpeg and returns a same-origin capability URL.
- * 
- * Reads the active comic source directly (page index only — no client upload).
- * Holds a source lease for the whole encode so archive handles stay valid.
- * Small RPC-delivery pages are supported (does not go through GetPageStream).
+ * GetRemuxedStream lossless-copies video/audio tracks into a clean MP4 (drops data
+ * tracks like tmcd). Fast path when WebKit decodes H.264 briefly then fails.
+ */
+export function GetRemuxedStream(index: number): $CancellablePromise<$models.PageStream | null> {
+    return $Call.ByID(1188587120, index);
+}
+
+/**
+ * GetTranscodedStream re-encodes a video/audio page to WebM/Ogg via system ffmpeg.
  */
 export function GetTranscodedStream(index: number): $CancellablePromise<$models.PageStream | null> {
     return $Call.ByID(2930947057, index);

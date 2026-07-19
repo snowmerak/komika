@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -96,8 +97,11 @@ func TestFolderStreamRangeResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ps == nil || ps.Token == "" || ps.URL != mediaPathPrefix+ps.Token {
+	if ps == nil || ps.Token == "" || !strings.HasSuffix(ps.URL, mediaPathPrefix+ps.Token) {
 		t.Fatalf("unexpected PageStream: %+v", ps)
+	}
+	if !strings.HasPrefix(ps.URL, "http://127.0.0.1:") {
+		t.Fatalf("want loopback http URL, got %q", ps.URL)
 	}
 
 	rr := serveMediaRequest(svc, http.MethodGet, ps.URL, map[string]string{
@@ -522,19 +526,21 @@ func TestGetPageStreamRejectsRPCPage(t *testing.T) {
 	}
 	idx := -1
 	for i, p := range comic.Pages {
-		if p.Delivery == deliveryRPC {
+		// Images stay RPC when small; A/V is always stream now.
+		if p.Delivery == deliveryRPC && strings.HasPrefix(p.Mime, "image/") {
 			idx = i
 			break
 		}
 	}
 	if idx < 0 {
-		t.Fatal("no rpc page")
+		t.Fatal("no rpc image page")
 	}
 	_, err = svc.GetPageStream(idx)
 	if !errors.Is(err, errNotStreamPage) {
 		t.Fatalf("want errNotStreamPage, got %v", err)
 	}
 }
+
 
 func TestServiceShutdownCleansStreams(t *testing.T) {
 	svc := testService(t)
@@ -558,4 +564,139 @@ func TestServiceShutdownCleansStreams(t *testing.T) {
 		t.Fatal("active still set")
 	}
 	svc.mu.Unlock()
+}
+
+func TestSmallVideoAlwaysStreamsWithRange(t *testing.T) {
+	svc := testService(t)
+	dir := t.TempDir()
+	src := filepath.Join("testdata", "media-fixture", "8-video.mp4")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "clip.mp4"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	comic, err := svc.openPath(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comic.Pages[0].Delivery != deliveryStream {
+		t.Fatalf("small video delivery=%q want stream", comic.Pages[0].Delivery)
+	}
+	ps, err := svc.GetPageStream(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := fetchMediaURL(http.MethodGet, ps.URL, map[string]string{"Range": "bytes=0-15"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Range"); !strings.HasPrefix(got, "bytes 0-15/") {
+		t.Fatalf("Content-Range=%q", got)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "video/mp4" {
+		t.Fatalf("Content-Type=%q", ct)
+	}
+	body := make([]byte, 32)
+	n, _ := resp.Body.Read(body)
+	if n != 16 {
+		t.Fatalf("body len=%d", n)
+	}
+}
+
+
+func TestVideoAlwaysStreamsEvenWhenUnderRPCLimit(t *testing.T) {
+	svc := testService(t)
+	dir := t.TempDir()
+	src := filepath.Join("testdata", "media-fixture", "8-video.mp4")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pad with trailing zeros past half of maxPageBytes while staying under the limit.
+	// Delivery must still be stream because mime is video/*, not because of size.
+	if int64(len(data)) >= maxPageBytes/2 {
+		t.Fatalf("fixture unexpectedly large: %d", len(data))
+	}
+	padTo := int(maxPageBytes / 2)
+	padded := make([]byte, padTo)
+	copy(padded, data)
+	path := filepath.Join(dir, "padded.mp4")
+	if err := os.WriteFile(path, padded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	comic, err := svc.openPath(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comic.Pages[0].Delivery != deliveryStream {
+		t.Fatalf("delivery=%q want stream for video under RPC size limit", comic.Pages[0].Delivery)
+	}
+	// Ensure GetPageStream works and Range is correct against padded size.
+	ps, err := svc.GetPageStream(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := fetchMediaURL(http.MethodGet, ps.URL, map[string]string{"Range": "bytes=0-15"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	want := fmt.Sprintf("bytes 0-15/%d", padTo)
+	if got := resp.Header.Get("Content-Range"); got != want {
+		t.Fatalf("Content-Range=%q want %q", got, want)
+	}
+	mid := padTo / 2
+	resp2, err := fetchMediaURL(http.MethodGet, ps.URL, map[string]string{
+		"Range": fmt.Sprintf("bytes=%d-%d", mid, mid+63),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	body := make([]byte, 128)
+	n, _ := resp2.Body.Read(body)
+	if resp2.StatusCode != http.StatusPartialContent || n != 64 {
+		t.Fatalf("mid status=%d len=%d", resp2.StatusCode, n)
+	}
+}
+
+func TestForcesStreamDeliveryPrefixes(t *testing.T) {
+	cases := []struct {
+		mime string
+		want bool
+	}{
+		{"video/mp4", true},
+		{"VIDEO/WEBM", true},
+		{"video/x-matroska", true},
+		{"audio/flac", true},
+		{"audio/mpeg", true},
+		{"image/png", false},
+		{"application/pdf", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := forcesStreamDelivery(tc.mime); got != tc.want {
+			t.Fatalf("forcesStreamDelivery(%q)=%v want %v", tc.mime, got, tc.want)
+		}
+	}
+}
+
+func fetchMediaURL(method, rawURL string, headers map[string]string) (*http.Response, error) {
+	req, err := http.NewRequest(method, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	return http.DefaultClient.Do(req)
 }

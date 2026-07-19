@@ -15,7 +15,8 @@ import (
 
 const (
 	defaultMaxTranscodeTempBytes = 2 << 30
-	transcodeProfile             = "webm-vp8-opus-rt-v2"
+	transcodeProfileWebM         = "webm-vp8-opus-rt-v5-scale1280"
+	transcodeProfileRemuxMP4     = "mp4-copy-clean-v1"
 	transcodeAudioProfile        = "ogg-opus-v1"
 )
 
@@ -146,13 +147,19 @@ func initTranscodeState(s *ComicService) {
 	}
 }
 
-// GetTranscodedStream transcodes a video/audio page to a WebView-friendly format
-// via system ffmpeg and returns a same-origin capability URL.
-//
-// Reads the active comic source directly (page index only — no client upload).
-// Holds a source lease for the whole encode so archive handles stay valid.
-// Small RPC-delivery pages are supported (does not go through GetPageStream).
+// GetTranscodedStream re-encodes a video/audio page to WebM/Ogg via system ffmpeg.
 func (s *ComicService) GetTranscodedStream(index int) (*PageStream, error) {
+	return s.getCompatibleStream(index, "reencode")
+}
+
+// GetRemuxedStream lossless-copies video/audio tracks into a clean MP4 (drops data
+// tracks like tmcd). Fast path when WebKit decodes H.264 briefly then fails.
+func (s *ComicService) GetRemuxedStream(index int) (*PageStream, error) {
+	return s.getCompatibleStream(index, "remux")
+}
+
+// mode: "remux" | "reencode"
+func (s *ComicService) getCompatibleStream(index int, mode string) (*PageStream, error) {
 	initStreamState(s)
 	initTranscodeState(s)
 
@@ -172,6 +179,10 @@ func (s *ComicService) GetTranscodedStream(index int) (*PageStream, error) {
 	if kind != "video" && kind != "audio" {
 		return nil, errTranscodeUnsupported
 	}
+	if mode == "remux" && kind != "video" {
+		// Remux path is for container cleanup of video clips.
+		return nil, errTranscodeUnsupported
+	}
 
 	// Direct source access — works for both rpc and stream delivery pages.
 	ps, err := src.StreamPage(index)
@@ -179,12 +190,12 @@ func (s *ComicService) GetTranscodedStream(index int) (*PageStream, error) {
 		return nil, err
 	}
 
-	cacheKey, err := s.transcodeCacheKey(slot.generation, index, desc.Mime, ps)
+	cacheKey, err := s.transcodeCacheKey(slot.generation, index, desc.Mime, ps, mode)
 	if err != nil {
 		return nil, err
 	}
 
-	entry, err := s.getOrCreateTranscode(slot.generation, kind, ps, cacheKey)
+	entry, err := s.getOrCreateTranscode(slot.generation, kind, mode, ps, cacheKey)
 	if err != nil {
 		return nil, err
 	}
@@ -195,8 +206,8 @@ func (s *ComicService) GetTranscodedStream(index int) (*PageStream, error) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.active == nil || s.active.generation != slot.generation {
+		s.mu.Unlock()
 		return nil, errNoActiveComic
 	}
 	// Non-temporary: transcode cache owns the file lifetime across tokens.
@@ -210,9 +221,15 @@ func (s *ComicService) GetTranscodedStream(index int) (*PageStream, error) {
 		refs:       0,
 		retired:    false,
 	}
+	s.mu.Unlock()
 
+	url, err := s.mediaStreamURL(token)
+	if err != nil {
+		_ = s.ReleasePageStream(token)
+		return nil, err
+	}
 	return &PageStream{
-		URL:   mediaPathPrefix + token,
+		URL:   url,
 		Token: token,
 		Mime:  entry.mime,
 	}, nil
@@ -221,6 +238,7 @@ func (s *ComicService) GetTranscodedStream(index int) (*PageStream, error) {
 func (s *ComicService) getOrCreateTranscode(
 	generation uint64,
 	kind string,
+	mode string,
 	ps pageStream,
 	cacheKey string,
 ) (*transcodeCacheEntry, error) {
@@ -250,7 +268,7 @@ func (s *ComicService) getOrCreateTranscode(
 	s.transcodeInflight[cacheKey] = flight
 	s.mu.Unlock()
 
-	entry, err := s.runTranscode(ctx, generation, kind, ps, cacheKey)
+	entry, err := s.runTranscode(ctx, generation, kind, mode, ps, cacheKey)
 
 	s.mu.Lock()
 	delete(s.transcodeInflight, cacheKey)
@@ -287,6 +305,7 @@ func (s *ComicService) runTranscode(
 	ctx context.Context,
 	generation uint64,
 	kind string,
+	mode string,
 	ps pageStream,
 	cacheKey string,
 ) (*transcodeCacheEntry, error) {
@@ -298,7 +317,10 @@ func (s *ComicService) runTranscode(
 		log.Printf("komika: ffmpeg unavailable: %v", err)
 		return nil, errFFmpegUnavailable
 	}
-	log.Printf("komika: host transcode using %s (kind=%s)", ffmpegPath, kind)
+	if mode != "remux" {
+		mode = "reencode"
+	}
+	log.Printf("komika: host ffmpeg mode=%s using %s (kind=%s)", mode, ffmpegPath, kind)
 
 	// Folder/standalone: ps.path. Archive: materialize seekable temp for ffmpeg -i.
 	inputPath, cleanupInput, err := s.materializeTranscodeInput(ps)
@@ -309,10 +331,13 @@ func (s *ComicService) runTranscode(
 		defer cleanupInput()
 	}
 
-	outMime, argsTail := transcodeOutputArgs(kind)
+	outMime, argsTail := transcodeOutputArgs(kind, mode)
 	pattern := "komika-tx-*.webm"
-	if kind == "audio" {
+	switch {
+	case kind == "audio":
 		pattern = "komika-tx-*.ogg"
+	case mode == "remux":
+		pattern = "komika-tx-*.mp4"
 	}
 	outFile, err := os.CreateTemp("", pattern)
 	if err != nil {
@@ -369,7 +394,7 @@ func (s *ComicService) runTranscode(
 	s.transcodeCache[cacheKey] = entry
 	return entry, nil
 }
-func transcodeOutputArgs(kind string) (mime string, args []string) {
+func transcodeOutputArgs(kind string, mode string) (mime string, args []string) {
 	if kind == "audio" {
 		return "audio/ogg", []string{
 			"-threads", "2",
@@ -379,8 +404,25 @@ func transcodeOutputArgs(kind string) (mime string, args []string) {
 			"-f", "ogg",
 		}
 	}
-	// Cap threads so interactive UI stays responsive during 1080p re-encode.
+	if mode == "remux" {
+		// Lossless: video + optional audio only; drop data/timecode tracks.
+		return "video/mp4", []string{
+			"-map", "0:v:0",
+			"-map", "0:a:0?",
+			"-c", "copy",
+			"-dn",
+			"-map_metadata", "-1",
+			"-movflags", "+faststart",
+			"-f", "mp4",
+		}
+	}
+	// Cap threads so interactive UI stays responsive during 1080p/4K re-encode.
+	// Optional audio map: many camera clips are video-only (+ tmcd data).
+	// Longer side ≤1280: WebKitGTK often dies ~1s into H.264 Level 5.2 4K.
 	return "video/webm", []string{
+		"-map", "0:v:0",
+		"-map", "0:a:0?",
+		"-vf", "scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease",
 		"-threads", "2",
 		"-c:v", "libvpx",
 		"-b:v", "1M",
@@ -435,7 +477,7 @@ func (s *ComicService) materializeTranscodeInput(ps pageStream) (path string, cl
 	return tmpPath, cleanup, nil
 }
 
-func (s *ComicService) transcodeCacheKey(generation uint64, index int, mime string, ps pageStream) (string, error) {
+func (s *ComicService) transcodeCacheKey(generation uint64, index int, mime string, ps pageStream, mode string) (string, error) {
 	var size int64
 	var modUnix int64
 	var pathPart string
@@ -457,9 +499,11 @@ func (s *ComicService) transcodeCacheKey(generation uint64, index int, mime stri
 			modUnix = ps.modTime.UnixNano()
 		}
 	}
-	profile := transcodeProfile
+	profile := transcodeProfileWebM
 	if mediaKindFromMime(mime) == "audio" {
 		profile = transcodeAudioProfile
+	} else if mode == "remux" {
+		profile = transcodeProfileRemuxMP4
 	}
 	return fmt.Sprintf("%d|%d|%s|%s|%d|%d|%s", generation, index, mime, pathPart, size, modUnix, profile), nil
 }
