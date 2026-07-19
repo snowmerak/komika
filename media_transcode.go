@@ -78,6 +78,7 @@ func isExecutableFile(path string) bool {
 // Strips AppImage library overrides so a host ffmpeg does not load bundled libs.
 var runFFmpegCommand = func(ctx context.Context, ffmpegPath string, args []string) error {
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	hideConsoleWindow(cmd)
 	cmd.Env = sanitizedExecEnv()
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

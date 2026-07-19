@@ -40,6 +40,7 @@ func (s *ComicService) ensureFaststartMP4(srcPath string) (*faststartFile, error
 		"-movflags", "+faststart",
 		out,
 	)
+	hideConsoleWindow(cmd)
 	outb, err := cmd.CombinedOutput()
 	if err != nil {
 		_ = os.RemoveAll(dir)
