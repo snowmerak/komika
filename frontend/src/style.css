@@ -537,8 +537,10 @@ body {
 .reader__media--error {
   aspect-ratio: 16 / 9;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: center;
+  gap: 0.65rem;
   box-sizing: border-box;
   padding: 1rem;
   text-align: center;
@@ -736,4 +738,57 @@ body {
   .reader__progress-bar {
     transition: none;
   }
+}
+
+
+.reader__media-error-msg {
+  text-align: center;
+}
+
+.reader__media-diagnostics-wrap {
+  width: min(100%, 36rem);
+  margin: 0.35rem auto 0;
+  pointer-events: auto;
+}
+
+.reader__media-host:has(> video.reader__media--video) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.reader__media-diagnostics {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border-muted, #333);
+  border-radius: 0.4rem;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--color-text-muted, #9aa0a6);
+  font-size: 0.78rem;
+  text-align: left;
+}
+
+.reader__media-diagnostics > summary {
+  cursor: pointer;
+  padding: 0.4rem 0.65rem;
+  user-select: none;
+  list-style-position: outside;
+  color: var(--color-text, #e8eaed);
+}
+
+.reader__media-diagnostics[open] > summary {
+  border-bottom: 1px solid var(--color-border-muted, #333);
+}
+
+.reader__media-diagnostics-body {
+  margin: 0;
+  padding: 0.55rem 0.65rem 0.7rem;
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--color-text-muted, #b0b6bc);
 }
