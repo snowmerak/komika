@@ -302,6 +302,66 @@ export function accumulateVideoProgress(
 
 export type VideoFallbackStage = "none" | "remux" | "reencode" | "done";
 
+/** Pure details open toggle used by diagnostics summary click handler. */
+export function toggleDetailsOpen(currentlyOpen: boolean): boolean {
+  return !currentlyOpen;
+}
+
+/** Whether reader video should call play() after an unexpected pause. */
+export function shouldAutoResumeVideo(input: {
+  disposed: boolean;
+  fallingBack: boolean;
+  userPaused: boolean;
+  isPaused: boolean;
+  ended: boolean;
+  visibilityState: string;
+}): boolean {
+  if (input.disposed || input.fallingBack || input.userPaused) return false;
+  if (input.ended) return false;
+  if (!input.isPaused) return false;
+  if (input.visibilityState === "hidden") return false;
+  return true;
+}
+
+/**
+ * Mark pause as user-intent if a control gesture happened recently.
+ * gestureAt/pauseAt are performance.now()-style timestamps; windowMs default 500.
+ */
+export function isUserIntentionalPause(
+  lastGestureAt: number | null,
+  pauseAt: number,
+  windowMs = 500
+): boolean {
+  if (lastGestureAt == null || !Number.isFinite(lastGestureAt)) return false;
+  const dt = pauseAt - lastGestureAt;
+  return dt >= 0 && dt <= windowMs;
+}
+
+/**
+ * One-click play when the element was already paused before this gesture.
+ * If it was playing, the same click is a pause intent — do not force play.
+ */
+/** Diagnostics accordion closed: always hard-kick unless terminal. */
+export function shouldHardKickPlaybackOnDiagnosticsClose(input: {
+  disposed: boolean;
+  fallingBack: boolean;
+  ended: boolean;
+}): boolean {
+  return !input.disposed && !input.fallingBack && !input.ended;
+}
+
+export function shouldClickToPlayVideo(input: {
+  disposed: boolean;
+  fallingBack: boolean;
+  ended: boolean;
+  wasPausedBeforeGesture: boolean;
+  isPausedNow: boolean;
+}): boolean {
+  if (input.disposed || input.fallingBack || input.ended) return false;
+  if (!input.wasPausedBeforeGesture) return false;
+  return input.isPausedNow;
+}
+
 export type StallWatchdogDecision =
   | { action: "noop" }
   | { action: "mark-ok" }

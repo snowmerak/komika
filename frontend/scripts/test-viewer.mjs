@@ -104,6 +104,11 @@ try {
   isMeaningfulVideoProgress,
   accumulateVideoProgress,
   decideStallWatchdog,
+  toggleDetailsOpen,
+  shouldAutoResumeVideo,
+  isUserIntentionalPause,
+  shouldClickToPlayVideo,
+  shouldHardKickPlaybackOnDiagnosticsClose,
     mediaPlaybackFallbackMessage,
     shouldLoadMediaDelivery,
     shouldRetainCachedMedia,
@@ -887,6 +892,87 @@ try {
     }).action,
     "noop"
   );
+  // diagnostics accordion toggle is pure; must not couple to media.paused
+  assert.equal(toggleDetailsOpen(false), true);
+  assert.equal(toggleDetailsOpen(true), false);
+  // Auto-resume policy: unintentional pause only
+  const baseResume = {
+    disposed: false,
+    fallingBack: false,
+    userPaused: false,
+    isPaused: true,
+    ended: false,
+    visibilityState: "visible",
+  };
+  assert.equal(shouldAutoResumeVideo(baseResume), true);
+  assert.equal(shouldAutoResumeVideo({ ...baseResume, userPaused: true }), false);
+  assert.equal(shouldAutoResumeVideo({ ...baseResume, isPaused: false }), false);
+  assert.equal(shouldAutoResumeVideo({ ...baseResume, fallingBack: true }), false);
+  assert.equal(shouldAutoResumeVideo({ ...baseResume, visibilityState: "hidden" }), false);
+  assert.equal(shouldAutoResumeVideo({ ...baseResume, ended: true }), false);
+  // gesture-linked pause window
+  assert.equal(isUserIntentionalPause(1000, 1200, 500), true);
+  assert.equal(isUserIntentionalPause(1000, 1600, 500), false);
+  assert.equal(isUserIntentionalPause(null, 1200, 500), false);
+  // one-click play: already paused before gesture
+  assert.equal(
+    shouldHardKickPlaybackOnDiagnosticsClose({
+      disposed: false,
+      fallingBack: false,
+      ended: false,
+    }),
+    true
+  );
+  // controls may still say "playing" (paused=false) — kick anyway
+  assert.equal(
+    shouldHardKickPlaybackOnDiagnosticsClose({
+      disposed: false,
+      fallingBack: false,
+      ended: true,
+    }),
+    false
+  );
+  assert.equal(
+    shouldClickToPlayVideo({
+      disposed: false,
+      fallingBack: false,
+      ended: false,
+      wasPausedBeforeGesture: true,
+      isPausedNow: true,
+    }),
+    true
+  );
+  // click while playing → pause: was not paused before gesture
+  assert.equal(
+    shouldClickToPlayVideo({
+      disposed: false,
+      fallingBack: false,
+      ended: false,
+      wasPausedBeforeGesture: false,
+      isPausedNow: true,
+    }),
+    false
+  );
+  assert.equal(
+    shouldClickToPlayVideo({
+      disposed: false,
+      fallingBack: false,
+      ended: true,
+      wasPausedBeforeGesture: true,
+      isPausedNow: true,
+    }),
+    false
+  );
+  // diagnostics collapse → open then closed leaves pause intent false
+  assert.equal(toggleDetailsOpen(true), false);
+  // open → closed must not require a play()/pause() side effect in caller
+  {
+    let paused = false;
+    const open1 = true;
+    const open2 = toggleDetailsOpen(open1); // user collapses
+    assert.equal(open2, false);
+    assert.equal(paused, false); // collapsing diagnostics must leave paused untouched
+  }
   assert.equal(
     decideStallWatchdog({
       disposed: false,

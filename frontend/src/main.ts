@@ -28,6 +28,10 @@ import {
   isMeaningfulVideoProgress,
   accumulateVideoProgress,
   decideStallWatchdog,
+  shouldAutoResumeVideo,
+  isUserIntentionalPause,
+  shouldClickToPlayVideo,
+  shouldHardKickPlaybackOnDiagnosticsClose,
 } from "./viewer";
 import { combinedFallbackMessage, transcodeWithWasm, WASM_TRANSCODE_MAX_BYTES } from "./media_wasm";
 import {
@@ -1249,6 +1253,13 @@ function attachMediaElement(
   let fallbackAbort: AbortController | null = null;
   let ownedWasmBlobUrl: string | null = null;
   let metaTimer: number | null = null;
+  /** True only after the user intentionally pauses (controls / Space / K). */
+  let userPaused = false;
+  let resumeTimer: number | null = null;
+  /** performance.now() of last user media-control gesture on the video. */
+  let lastMediaGestureAt: number | null = null;
+  /** paused state sampled on pointerdown/keydown before the control toggles. */
+  let wasPausedBeforeGesture = false;
   /** True once native (or fallback) media has produced usable forward progress. */
   let hadMeaningfulPlayback = false;
   let progressLastTime = Number.NaN;
@@ -1282,6 +1293,85 @@ function attachMediaElement(
     }
   };
 
+  const clearResumeTimer = (): void => {
+    if (resumeTimer != null) {
+      window.clearTimeout(resumeTimer);
+      resumeTimer = null;
+    }
+  };
+
+  const noteMediaGesture = (): void => {
+    wasPausedBeforeGesture = video.paused;
+    lastMediaGestureAt = performance.now();
+  };
+
+  const scheduleAutoResume = (why: string): void => {
+    if (
+      !shouldAutoResumeVideo({
+        disposed,
+        fallingBack,
+        userPaused,
+        isPaused: true,
+        ended: video.ended,
+        visibilityState: document.visibilityState,
+      })
+    ) {
+      return;
+    }
+    clearResumeTimer();
+    // Defer so we don't fight the same event turn that paused (controls / WebKit glitch).
+    resumeTimer = window.setTimeout(() => {
+      resumeTimer = null;
+      if (
+        !shouldAutoResumeVideo({
+          disposed,
+          fallingBack,
+          userPaused,
+          isPaused: video.paused,
+          ended: video.ended,
+          visibilityState: document.visibilityState,
+        })
+      ) {
+        return;
+      }
+      diag(`auto-resume (${why})`);
+      void video.play().catch((e) => diag(`auto-resume play() reject: ${e}`));
+    }, 40);
+  };
+
+  /**
+   * Collapse diagnostics and hard-kick the media element.
+   * WebKit often leaves controls in "playing" while frames are frozen; .paused
+   * stays false so play()-only no-ops. A pause→play cycle matches the two
+   * control clicks users need manually.
+   */
+  const afterDiagnosticsClosed = (): void => {
+    if (
+      !shouldHardKickPlaybackOnDiagnosticsClose({
+        disposed,
+        fallingBack,
+        ended: video.ended,
+      })
+    ) {
+      return;
+    }
+    userPaused = false;
+    clearResumeTimer();
+    diag(
+      `diagnostics-closed kick paused=${video.paused} ended=${video.ended} ct=${video.currentTime.toFixed(2)} rs=${video.readyState}`
+    );
+    try {
+      video.pause();
+    } catch {
+      /* ignore */
+    }
+    // Next task: play after pause so WebKit applies both state transitions.
+    window.setTimeout(() => {
+      if (disposed || fallingBack || video.ended || userPaused) return;
+      void video.play().catch((e) => diag(`diagnostics-closed play() reject: ${e}`));
+    }, 0);
+  };
+
   const removeDiagnosticsPanel = (): void => {
     diagPanel?.remove();
     diagPanel = null;
@@ -1291,20 +1381,52 @@ function attachMediaElement(
   const mountDiagnosticsPanel = (): void => {
     if (!diagPanel) return;
     host.classList.add("reader__media-host--diagnostics");
-    // Overlay sits as first child so it paints above the video without :has().
-    if (diagPanel.parentElement !== host) {
-      host.insertBefore(diagPanel, host.firstChild);
-    } else if (host.firstChild !== diagPanel) {
-      host.insertBefore(diagPanel, host.firstChild);
+    // Below the video — never over native controls (WebKit click-through).
+    if (diagPanel.parentElement !== host || host.lastChild !== diagPanel) {
+      host.append(diagPanel);
     }
+  };
+
+  /** summary open/close without letting the gesture hit <video> (WebKit composite). */
+  const wireDiagnosticsSummary = (details: HTMLDetailsElement, summary: HTMLElement): void => {
+    const stop = (e: Event): void => {
+      e.stopPropagation();
+    };
+    for (const type of ["pointerdown", "pointerup", "pointercancel", "mousedown", "mouseup", "click", "dblclick"] as const) {
+      details.addEventListener(type, stop);
+    }
+    summary.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      try {
+        summary.setPointerCapture(e.pointerId);
+      } catch {
+        /* capture optional */
+      }
+    });
+    summary.addEventListener("pointerup", (e) => {
+      e.stopPropagation();
+      try {
+        if (summary.hasPointerCapture(e.pointerId)) {
+          summary.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+    summary.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const willOpen = !details.open;
+      details.open = willOpen;
+      if (!willOpen) {
+        // Best UX: panel closed → ensure playback continues.
+        afterDiagnosticsClosed();
+      }
+    });
   };
 
   const ensureDiagnosticsPanel = (open: boolean): void => {
     if (disposed) return;
-    if (hadMeaningfulPlayback && !open) {
-      removeDiagnosticsPanel();
-      return;
-    }
     if (!diagPanel) {
       const wrap = document.createElement("div");
       wrap.className = "reader__media-diagnostics-wrap";
@@ -1317,10 +1439,16 @@ function attachMediaElement(
       pre.className = "reader__media-diagnostics-body";
       pre.textContent = formatMediaDiagnostics(diagLines);
       details.append(summary, pre);
+      wireDiagnosticsSummary(details, summary);
       wrap.append(details);
+      // Guard the wrap itself as well.
+      for (const type of ["pointerdown", "pointerup", "click"] as const) {
+        wrap.addEventListener(type, (e) => e.stopPropagation());
+      }
       diagPanel = wrap;
     } else {
       const d = diagPanel.querySelector("details");
+      // Only force-open on request; never force-close (user may be reading).
       if (d && open) d.open = true;
       const body = diagPanel.querySelector(".reader__media-diagnostics-body");
       if (body) body.textContent = formatMediaDiagnostics(diagLines);
@@ -1341,7 +1469,14 @@ function attachMediaElement(
     waitingSince = null;
     clearStallTimer();
     diag(`ok meaningful playback (${reason}) progressed=${progressAccum.toFixed(2)}s`);
-    removeDiagnosticsPanel();
+    // Keep accordion mounted so the user can re-open logs; just collapse it.
+    if (diagPanel) {
+      const d = diagPanel.querySelector("details");
+      if (d) d.open = false;
+    }
+    if (video.paused && !video.ended && !userPaused) {
+      scheduleAutoResume("meaningful-playback");
+    }
   };
 
   const showVideoError = (message: string): void => {
@@ -1480,6 +1615,10 @@ function attachMediaElement(
     video.dataset.mediaUrl = media.url;
     // New source — wait for its own playback evidence.
     resetProgressTracking();
+    userPaused = false;
+    lastMediaGestureAt = null;
+    wasPausedBeforeGesture = false;
+    clearResumeTimer();
     diag(`applySource delivery=${delivery} mime=${mime} url=${url.slice(0, 96)}`);
     video.src = media.url;
     video.load();
@@ -1514,10 +1653,8 @@ function attachMediaElement(
     // Preserve live diagnostics so stall vs "converting" is visible.
     host.replaceChildren(card);
     if (diagPanel) {
-      // Detach/re-attach after replaceChildren wiped host.
       diagPanel.remove();
-      host.append(card);
-      host.insertBefore(diagPanel, host.firstChild);
+      host.append(diagPanel);
       host.classList.add("reader__media-host--diagnostics");
       const body = diagPanel.querySelector(".reader__media-diagnostics-body");
       if (body) body.textContent = formatMediaDiagnostics(diagLines);
@@ -1725,6 +1862,88 @@ function attachMediaElement(
   video.addEventListener("canplaythrough", () => onDiagEvent("canplaythrough"), vOpts);
   video.addEventListener("pointerdown", unmuteOnGesture, { once: true, signal: videoListenAbort.signal });
 
+  // Intentional control gestures (not diagnostics — those stopPropagation).
+  video.addEventListener(
+    "pointerdown",
+    () => {
+      noteMediaGesture();
+    },
+    vOpts
+  );
+  video.addEventListener(
+    "keydown",
+    (e) => {
+      const k = e.key;
+      if (k === " " || k === "Spacebar" || k === "k" || k === "K" || e.code === "Space" || e.code === "KeyK") {
+        noteMediaGesture();
+      }
+    },
+    vOpts
+  );
+
+  video.addEventListener(
+    "pause",
+    () => {
+      if (disposed || fallingBack) return;
+      if (video.ended) {
+        diag("pause at ended — no auto-resume");
+        return;
+      }
+      const now = performance.now();
+      if (isUserIntentionalPause(lastMediaGestureAt, now)) {
+        userPaused = true;
+        clearResumeTimer();
+        diag("user paused (gesture-linked)");
+        return;
+      }
+      diag(`pause event unintentional ct=${video.currentTime.toFixed(2)} — auto-resume`);
+      userPaused = false;
+      scheduleAutoResume("pause-event");
+    },
+    vOpts
+  );
+  video.addEventListener(
+    "play",
+    () => {
+      if (!video.paused) userPaused = false;
+    },
+    vOpts
+  );
+  // One-click play if the video was already paused before this gesture.
+  // pointerdown samples wasPausedBeforeGesture; a play→pause click must not force play.
+  video.addEventListener(
+    "click",
+    () => {
+      window.setTimeout(() => {
+        if (
+          !shouldClickToPlayVideo({
+            disposed,
+            fallingBack,
+            ended: video.ended,
+            wasPausedBeforeGesture,
+            isPausedNow: video.paused,
+          })
+        ) {
+          if (!video.paused) userPaused = false;
+          return;
+        }
+        userPaused = false;
+        diag("click-to-play (was paused before gesture)");
+        void video.play().catch((e) => diag(`click-to-play reject: ${e}`));
+      }, 0);
+    },
+    vOpts
+  );
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+      if (document.visibilityState === "visible") {
+        scheduleAutoResume("visibility");
+      }
+    },
+    vOpts
+  );
+
   // Bare video/mp4 often returns "maybe" without H.264; that path can stall WebKitGTK.
   const supported = hostLikelySupportsAV("video", media.mime);
   diag(
@@ -1757,6 +1976,7 @@ function attachMediaElement(
       removeDiagnosticsPanel();
       clearMetaTimer();
       clearStallTimer();
+      clearResumeTimer();
       fallbackAbort?.abort();
       videoListenAbort.abort();
       releaseHtmlMediaElement(video);
