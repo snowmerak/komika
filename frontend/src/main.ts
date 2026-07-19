@@ -3253,8 +3253,11 @@ function mountSingleReader(
   let mountedMedia: CachedMedia | null = null;
   const showMedia = (media: CachedMedia): void => {
     if (!shouldRemountCachedMedia(mountedMedia, media)) return;
+    // Tear down previous first. Old cleanup must not clear the new identity.
+    const previousCleanup = mediaCleanup;
+    mediaCleanup = null;
+    previousCleanup?.();
     mountedMedia = media;
-    mediaCleanup?.();
     const attached = attachMediaElement(
       mediaHost,
       media,
@@ -3267,7 +3270,7 @@ function mountSingleReader(
       }
     );
     mediaCleanup = () => {
-      mountedMedia = null;
+      if (mountedMedia === media) mountedMedia = null;
       attached.cleanup();
     };
   };
