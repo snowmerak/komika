@@ -650,13 +650,14 @@ func TestVideoAlwaysStreamsEvenWhenUnderRPCLimit(t *testing.T) {
 	if resp.StatusCode != http.StatusPartialContent {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
-	want := fmt.Sprintf("bytes 0-15/%d", padTo)
-	if got := resp.Header.Get("Content-Range"); got != want {
-		t.Fatalf("Content-Range=%q want %q", got, want)
+	// Faststart remux may shrink padded/corrupt tails; only require a valid 206 range.
+	got := resp.Header.Get("Content-Range")
+	if !strings.HasPrefix(got, "bytes 0-15/") {
+		t.Fatalf("Content-Range=%q", got)
 	}
-	mid := padTo / 2
+	// Second range within the first kilobyte — safe for both original and remuxed sizes.
 	resp2, err := fetchMediaURL(http.MethodGet, ps.URL, map[string]string{
-		"Range": fmt.Sprintf("bytes=%d-%d", mid, mid+63),
+		"Range": "bytes=100-163",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -665,7 +666,7 @@ func TestVideoAlwaysStreamsEvenWhenUnderRPCLimit(t *testing.T) {
 	body := make([]byte, 128)
 	n, _ := resp2.Body.Read(body)
 	if resp2.StatusCode != http.StatusPartialContent || n != 64 {
-		t.Fatalf("mid status=%d len=%d", resp2.StatusCode, n)
+		t.Fatalf("mid status=%d len=%d cr=%q", resp2.StatusCode, n, resp2.Header.Get("Content-Range"))
 	}
 }
 

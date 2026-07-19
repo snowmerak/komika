@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -180,25 +179,38 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 	// Phone camera exports (Android mp42) commonly need a cheap remux first.
 	if ps.mime == "video/mp4" || ps.mime == "video/quicktime" {
 		if fast, fsErr := mp4MoovBeforeMdat(streamPath); fsErr == nil && !fast {
-			if fixed, fixErr := s.ensureFaststartMP4(streamPath, ps.mime); fixErr == nil && fixed != "" {
+			fixed, fixErr := s.ensureFaststartMP4(streamPath)
+			if fixErr != nil {
+				log.Printf("komika: faststart remux skipped: %v", fixErr)
+			} else if fixed != nil {
 				log.Printf("komika: auto faststart remux for %s", streamPath)
-				// If we replaced a non-temp source path, the new file is our temp.
-				if !temporary {
-					temporary = true
-					if st, e := os.Stat(fixed); e == nil {
-						ownedBytes = st.Size()
-					}
-				} else {
-					// replace previous temp
-					_ = os.Remove(streamPath)
-					if st, e := os.Stat(fixed); e == nil {
-						// adjust reservation roughly
-						ownedBytes = st.Size()
+				prevPath, prevTemp, prevOwned := streamPath, temporary, ownedBytes
+				s.mu.Lock()
+				if prevTemp && prevPath != "" {
+					// Drop prior temp reservation before adopting the replacement.
+					s.archiveTempBytes -= prevOwned
+					if s.archiveTempBytes < 0 {
+						s.archiveTempBytes = 0
 					}
 				}
-				streamPath = fixed
-				if info, e := os.Stat(streamPath); e == nil {
-					modTime = info.ModTime()
+				// Refuse if cache would exceed cap (standalone faststart still uses this budget).
+				if s.maxArchiveTempBytes > 0 && s.archiveTempBytes+fixed.size > s.maxArchiveTempBytes {
+					s.mu.Unlock()
+					removeFaststartTree(fixed.path)
+					log.Printf("komika: faststart remux dropped: temp cache full")
+				} else {
+					s.archiveTempBytes += fixed.size
+					s.mu.Unlock()
+					if prevTemp && prevPath != "" && prevPath != fixed.path {
+						removeFaststartTree(prevPath)
+						_ = os.Remove(prevPath) // non-faststart temps are plain files
+					}
+					streamPath = fixed.path
+					temporary = true
+					ownedBytes = fixed.size
+					if info, e := os.Stat(streamPath); e == nil {
+						modTime = info.ModTime()
+					}
 				}
 			}
 		}
@@ -208,6 +220,7 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 	if err != nil {
 		if temporary {
 			s.releaseTempReservation(ownedBytes)
+			removeFaststartTree(streamPath)
 			_ = os.Remove(streamPath)
 		}
 		return nil, err
@@ -220,7 +233,12 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 			if s.archiveTempBytes < 0 {
 				s.archiveTempBytes = 0
 			}
-			_ = os.Remove(streamPath)
+			// unlock before filesystem IO
+			path := streamPath
+			s.mu.Unlock()
+			removeFaststartTree(path)
+			_ = os.Remove(path)
+			return nil, errNoActiveComic
 		}
 		s.mu.Unlock()
 		return nil, errNoActiveComic
@@ -414,18 +432,17 @@ func (s *ComicService) retireStreamEntryLocked(entry *streamEntry) {
 
 func (s *ComicService) removeStreamArtifactLocked(entry *streamEntry) {
 	if entry.temporary && entry.path != "" {
-		parent := filepath.Dir(entry.path)
-		_ = os.Remove(entry.path)
-		// ensureFaststartMP4 writes .../komika-faststart-*/faststart.mp4
-		if base := filepath.Base(parent); strings.HasPrefix(base, "komika-faststart-") {
-			_ = os.RemoveAll(parent)
-		}
-		s.archiveTempBytes -= entry.ownedBytes
+		path := entry.path
+		owned := entry.ownedBytes
+		entry.ownedBytes = 0
+		entry.path = ""
+		s.archiveTempBytes -= owned
 		if s.archiveTempBytes < 0 {
 			s.archiveTempBytes = 0
 		}
-		entry.ownedBytes = 0
-		entry.path = ""
+		// filesystem IO without holding semantics beyond accounting — caller holds mu.
+		removeFaststartTree(path)
+		_ = os.Remove(path)
 	}
 }
 

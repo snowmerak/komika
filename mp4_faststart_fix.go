@@ -6,24 +6,30 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
+type faststartFile struct {
+	path string
+	size int64
+	dir  string // komika-faststart-* parent; remove with removeFaststartTree
+}
+
 // ensureFaststartMP4 remuxes path to a temp MP4 with +faststart (moov before mdat).
-// Caller owns the returned path and must delete it with stream temp accounting.
-func (s *ComicService) ensureFaststartMP4(srcPath, mime string) (string, error) {
+// Caller must account size via adoptFaststartTempLocked and delete via removeFaststartTree.
+func (s *ComicService) ensureFaststartMP4(srcPath string) (*faststartFile, error) {
 	ffmpeg, err := lookFFmpegPath()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	dir, err := os.MkdirTemp("", "komika-faststart-*")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	out := filepath.Join(dir, "faststart.mp4")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	// Keep A/V; drop data/tmcd-like extras by mapping only A/V.
 	cmd := exec.CommandContext(ctx, ffmpeg,
 		"-hide_banner", "-loglevel", "error",
 		"-y",
@@ -37,14 +43,29 @@ func (s *ComicService) ensureFaststartMP4(srcPath, mime string) (string, error) 
 	outb, err := cmd.CombinedOutput()
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		return "", fmt.Errorf("faststart remux: %w: %s", err, truncate(string(outb), 400))
+		return nil, fmt.Errorf("faststart remux: %w: %s", err, truncateForLog(string(outb), 400))
 	}
-	// flatten: move file up and remove dir later via Remove on file only — keep dir with file
-	// stream cleanup removes streamPath file; also try remove parent if empty in retire
-	return out, nil
+	st, err := os.Stat(out)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
+	return &faststartFile{path: out, size: st.Size(), dir: dir}, nil
 }
 
-func truncate(s string, n int) string {
+func removeFaststartTree(path string) {
+	if path == "" {
+		return
+	}
+	parent := filepath.Dir(path)
+	_ = os.Remove(path)
+	if base := filepath.Base(parent); strings.HasPrefix(base, "komika-faststart-") {
+		_ = os.RemoveAll(parent)
+		return
+	}
+}
+
+func truncateForLog(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
