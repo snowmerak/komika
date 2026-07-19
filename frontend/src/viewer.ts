@@ -342,6 +342,66 @@ export function isUserIntentionalPause(
  * If it was playing, the same click is a pause intent — do not force play.
  */
 /** Diagnostics accordion closed: always hard-kick unless terminal. */
+/**
+ * After ended, WebKit may show "playing" while frames stay frozen.
+ * Reviving (reload src from 0) is appropriate when playback has ended
+ * or a play gesture arrives while still marked ended.
+ */
+export function shouldReviveVideoAfterEnded(input: {
+  ended: boolean;
+  userWantsPlay: boolean;
+}): boolean {
+  return input.ended && input.userWantsPlay;
+}
+
+/** Single-flight gate: only the first play/click after ended may start a revive. */
+export function beginEndedRevive(alreadyReviving: boolean): boolean {
+  return !alreadyReviving;
+}
+
+/** Soft-loop: auto-revive after ended without native video.loop (WebKit mid-file rewind). */
+export function shouldSoftLoopAfterEnded(input: {
+  softLoop: boolean;
+  ended: boolean;
+  disposed: boolean;
+  fallingBack: boolean;
+  reviving: boolean;
+}): boolean {
+  return (
+    input.softLoop &&
+    input.ended &&
+    !input.disposed &&
+    !input.fallingBack &&
+    !input.reviving
+  );
+}
+
+export type VideoPlaybackChrome = {
+  muted: boolean;
+  volume: number;
+  playbackRate: number;
+};
+
+export function captureVideoPlaybackChrome(el: {
+  muted: boolean;
+  volume: number;
+  playbackRate: number;
+}): VideoPlaybackChrome {
+  const volume = Number.isFinite(el.volume) ? Math.min(1, Math.max(0, el.volume)) : 1;
+  const playbackRate =
+    Number.isFinite(el.playbackRate) && el.playbackRate > 0 ? el.playbackRate : 1;
+  return { muted: Boolean(el.muted), volume, playbackRate };
+}
+
+export function applyVideoPlaybackChrome(
+  el: { muted: boolean; volume: number; playbackRate: number },
+  chrome: VideoPlaybackChrome
+): void {
+  el.muted = chrome.muted;
+  el.volume = chrome.volume;
+  el.playbackRate = chrome.playbackRate;
+}
+
 /** Same object identity → keep live <video>; do not tear down. */
 export function shouldRemountCachedMedia(
   mounted: object | null | undefined,

@@ -110,6 +110,11 @@ try {
   shouldClickToPlayVideo,
   shouldHardKickPlaybackOnDiagnosticsClose,
   shouldRemountCachedMedia,
+  shouldReviveVideoAfterEnded,
+  beginEndedRevive,
+  applyVideoPlaybackChrome,
+  captureVideoPlaybackChrome,
+  shouldSoftLoopAfterEnded,
     mediaPlaybackFallbackMessage,
     shouldLoadMediaDelivery,
     shouldRetainCachedMedia,
@@ -924,6 +929,63 @@ try {
     }),
     true
   );
+  // ended → user hits play: revive (reload) rather than no-op play()
+  assert.equal(
+    shouldReviveVideoAfterEnded({ ended: true, userWantsPlay: true }),
+    true
+  );
+  assert.equal(
+    shouldReviveVideoAfterEnded({ ended: true, userWantsPlay: false }),
+    false
+  );
+  assert.equal(
+    shouldReviveVideoAfterEnded({ ended: false, userWantsPlay: true }),
+    false
+  );
+  // play+click must not double-revive
+  assert.equal(beginEndedRevive(false), true);
+  assert.equal(beginEndedRevive(true), false);
+  assert.equal(
+    shouldSoftLoopAfterEnded({
+      softLoop: true,
+      ended: true,
+      disposed: false,
+      fallingBack: false,
+      reviving: false,
+    }),
+    true
+  );
+  assert.equal(
+    shouldSoftLoopAfterEnded({
+      softLoop: true,
+      ended: true,
+      disposed: false,
+      fallingBack: false,
+      reviving: true,
+    }),
+    false
+  );
+  assert.equal(
+    shouldSoftLoopAfterEnded({
+      softLoop: false,
+      ended: true,
+      disposed: false,
+      fallingBack: false,
+      reviving: false,
+    }),
+    false
+  );
+  {
+    const chrome = captureVideoPlaybackChrome({ muted: false, volume: 0.4, playbackRate: 1.25 });
+    assert.equal(chrome.muted, false);
+    assert.equal(chrome.volume, 0.4);
+    assert.equal(chrome.playbackRate, 1.25);
+    const el = { muted: true, volume: 1, playbackRate: 1 };
+    applyVideoPlaybackChrome(el, chrome);
+    assert.equal(el.muted, false);
+    assert.equal(el.volume, 0.4);
+    assert.equal(el.playbackRate, 1.25);
+  }
   // cached hit: same object must not remount (avoids video restart)
   {
     const a = { url: "http://x/1" };

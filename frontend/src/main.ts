@@ -33,6 +33,11 @@ import {
   shouldClickToPlayVideo,
   shouldHardKickPlaybackOnDiagnosticsClose,
   shouldRemountCachedMedia,
+  shouldReviveVideoAfterEnded,
+  beginEndedRevive,
+  applyVideoPlaybackChrome,
+  captureVideoPlaybackChrome,
+  shouldSoftLoopAfterEnded,
 } from "./viewer";
 import { combinedFallbackMessage, transcodeWithWasm, WASM_TRANSCODE_MAX_BYTES } from "./media_wasm";
 import {
@@ -1236,17 +1241,28 @@ function attachMediaElement(
     };
   }
 
-  const video = document.createElement("video");
-  video.className = `${className} reader__media reader__media--video`;
-  video.controls = true;
-  video.muted = true;
-  // WebKitGTK + some phone MP4s rewind mid-file when loop=true (observed ~8s→0).
-  video.loop = false;
-  video.playsInline = true;
-  video.preload = "auto";
-  video.setAttribute("playsinline", "");
-  video.setAttribute("aria-label", alt);
-  video.dataset.mediaUrl = media.url;
+  // Native loop=true rewinds some phone MP4s mid-file on WebKitGTK (~8s→0).
+  // Soft-loop via ended→fresh element revive instead.
+  const softLoop = true;
+  const createVideoEl = (chrome?: { muted: boolean; volume: number; playbackRate: number }): HTMLVideoElement => {
+    const el = document.createElement("video");
+    el.className = `${className} reader__media reader__media--video`;
+    el.controls = true;
+    el.loop = false;
+    el.playsInline = true;
+    el.preload = "auto";
+    el.setAttribute("playsinline", "");
+    el.setAttribute("aria-label", alt);
+    el.dataset.mediaUrl = media.url;
+    if (chrome) {
+      applyVideoPlaybackChrome(el, chrome);
+    } else {
+      // Autoplay policy: start muted until user unmutes.
+      el.muted = true;
+    }
+    return el;
+  };
+  let video = createVideoEl();
 
   let disposed = false;
   let fallbackAttempted = false;
@@ -1257,6 +1273,11 @@ function attachMediaElement(
   let metaTimer: number | null = null;
   /** True only after the user intentionally pauses (controls / Space / K). */
   let userPaused = false;
+  /** Latched when 'ended' fires; cleared after a successful revive-from-start. */
+  let reachedEnded = false;
+  /** Prevent play+click double-remount after ended. */
+  let revivingFromEnded = false;
+  let videoListenAbort = new AbortController();
   let resumeTimer: number | null = null;
   /** performance.now() of last user media-control gesture on the video. */
   let lastMediaGestureAt: number | null = null;
@@ -1339,6 +1360,85 @@ function attachMediaElement(
       diag(`auto-resume (${why})`);
       void video.play().catch((e) => diag(`auto-resume play() reject: ${e}`));
     }, 40);
+  };
+
+  /**
+   * After ended, WebKit often ignores play(). Build a fresh <video>, rebind listeners,
+   * keep the same stream URL/token (do not ReleasePageStream), start from t=0.
+   */
+  const reviveVideoFromStart = (why: string): void => {
+    if (disposed || fallingBack) return;
+    if (!beginEndedRevive(revivingFromEnded)) {
+      diag(`revive skipped (in-flight) why=${why}`);
+      return;
+    }
+    const url = media.url;
+    if (!url) return;
+    revivingFromEnded = true;
+    diag(`revive-element (${why}) ct=${video.currentTime.toFixed(2)} softLoop=${softLoop}`);
+    userPaused = false;
+    reachedEnded = false;
+    clearResumeTimer();
+    clearStallTimer();
+    clearMetaTimer();
+    progressLastTime = Number.NaN;
+    progressAccum = 0;
+    waitingSince = null;
+    lastMediaGestureAt = null;
+    wasPausedBeforeGesture = false;
+
+    const prev = video;
+    const chrome = captureVideoPlaybackChrome(prev);
+    // Drop listeners on the dead element first.
+    videoListenAbort.abort();
+    try {
+      prev.pause();
+    } catch {
+      /* ignore */
+    }
+    try {
+      prev.removeAttribute("src");
+      prev.load();
+    } catch {
+      /* ignore */
+    }
+    prev.remove();
+
+    video = createVideoEl(chrome);
+    video.dataset.mediaUrl = url;
+    videoListenAbort = new AbortController();
+    bindVideoListeners();
+    if (diagPanel && diagPanel.parentElement === host) {
+      host.insertBefore(video, diagPanel);
+    } else {
+      host.append(video);
+      mountDiagnosticsPanel();
+    }
+    video.src = url;
+    const wantUnmuted = !video.muted;
+    void video.play().catch((e) => {
+      diag(`revive-element play() reject: ${e}`);
+      // Autoplay may block unmuted revive; start muted so frames move, user can unmute.
+      if (wantUnmuted && !disposed) {
+        video.muted = true;
+        void video.play()
+          .then(() => diag("revive-element muted fallback play ok"))
+          .catch((e2) => diag(`revive-element muted fallback reject: ${e2}`));
+      }
+    });
+    window.setTimeout(() => {
+      revivingFromEnded = false;
+      if (disposed || fallingBack || userPaused) return;
+      if (video.ended || (video.paused && video.currentTime < 0.05)) {
+        diag("revive-element follow-up play");
+        try {
+          video.currentTime = 0;
+        } catch {
+          /* ignore */
+        }
+        void video.play().catch(() => {});
+      }
+    }, 100);
   };
 
   /**
@@ -1631,6 +1731,8 @@ function attachMediaElement(
     // New source — wait for its own playback evidence.
     resetProgressTracking();
     userPaused = false;
+    reachedEnded = false;
+    revivingFromEnded = false;
     lastMediaGestureAt = null;
     wasPausedBeforeGesture = false;
     clearResumeTimer();
@@ -1872,105 +1974,143 @@ function attachMediaElement(
     showVideoError("This media is unavailable.");
   };
 
-  // Autoplay stays muted; first user gesture enables audio.
   const unmuteOnGesture = (): void => {
     video.muted = false;
   };
-  const videoListenAbort = new AbortController();
-  const vOpts: AddEventListenerOptions = { signal: videoListenAbort.signal };
-  video.addEventListener("loadedmetadata", onMeta, vOpts);
-  video.addEventListener("playing", onPlaying, vOpts);
-  video.addEventListener("timeupdate", onTimeUpdate, vOpts);
-  video.addEventListener("error", onError, vOpts);
-  video.addEventListener("waiting", () => onDiagEvent("waiting"), vOpts);
-  video.addEventListener("stalled", () => onDiagEvent("stalled"), vOpts);
-  video.addEventListener("suspend", () => onDiagEvent("suspend"), vOpts);
-  video.addEventListener("emptied", () => onDiagEvent("emptied"), vOpts);
-  video.addEventListener("canplay", () => onDiagEvent("canplay"), vOpts);
-  video.addEventListener("canplaythrough", () => onDiagEvent("canplaythrough"), vOpts);
-  video.addEventListener("pointerdown", unmuteOnGesture, { once: true, signal: videoListenAbort.signal });
 
-  // Intentional control gestures (not diagnostics — those stopPropagation).
-  video.addEventListener(
-    "pointerdown",
-    () => {
-      noteMediaGesture();
-    },
-    vOpts
-  );
-  video.addEventListener(
-    "keydown",
-    (e) => {
-      const k = e.key;
-      if (k === " " || k === "Spacebar" || k === "k" || k === "K" || e.code === "Space" || e.code === "KeyK") {
+  const bindVideoListeners = (): void => {
+    const vOpts: AddEventListenerOptions = { signal: videoListenAbort.signal };
+    video.addEventListener("loadedmetadata", onMeta, vOpts);
+    video.addEventListener("playing", onPlaying, vOpts);
+    video.addEventListener("timeupdate", onTimeUpdate, vOpts);
+    video.addEventListener("error", onError, vOpts);
+    video.addEventListener("waiting", () => onDiagEvent("waiting"), vOpts);
+    video.addEventListener("stalled", () => onDiagEvent("stalled"), vOpts);
+    video.addEventListener("suspend", () => onDiagEvent("suspend"), vOpts);
+    video.addEventListener("emptied", () => onDiagEvent("emptied"), vOpts);
+    video.addEventListener("canplay", () => onDiagEvent("canplay"), vOpts);
+    video.addEventListener("canplaythrough", () => onDiagEvent("canplaythrough"), vOpts);
+    video.addEventListener("pointerdown", unmuteOnGesture, { once: true, signal: videoListenAbort.signal });
+    video.addEventListener(
+      "pointerdown",
+      () => {
         noteMediaGesture();
-      }
-    },
-    vOpts
-  );
-
-  video.addEventListener(
-    "pause",
-    () => {
-      if (disposed || fallingBack) return;
-      if (video.ended) {
-        diag("pause at ended — no auto-resume");
-        return;
-      }
-      const now = performance.now();
-      if (isUserIntentionalPause(lastMediaGestureAt, now)) {
-        userPaused = true;
-        clearResumeTimer();
-        diag("user paused (gesture-linked)");
-        return;
-      }
-      diag(`pause event unintentional ct=${video.currentTime.toFixed(2)} — auto-resume`);
-      userPaused = false;
-      scheduleAutoResume("pause-event");
-    },
-    vOpts
-  );
-  video.addEventListener(
-    "play",
-    () => {
-      if (!video.paused) userPaused = false;
-    },
-    vOpts
-  );
-  // One-click play if the video was already paused before this gesture.
-  // pointerdown samples wasPausedBeforeGesture; a play→pause click must not force play.
-  video.addEventListener(
-    "click",
-    () => {
-      window.setTimeout(() => {
+      },
+      vOpts
+    );
+    video.addEventListener(
+      "keydown",
+      (e) => {
+        const k = e.key;
+        if (k === " " || k === "Spacebar" || k === "k" || k === "K" || e.code === "Space" || e.code === "KeyK") {
+          noteMediaGesture();
+        }
+      },
+      vOpts
+    );
+    video.addEventListener(
+      "ended",
+      () => {
+        reachedEnded = true;
+        diag(
+          `ended ct=${video.currentTime.toFixed(2)} dur=${Number.isFinite(video.duration) ? video.duration.toFixed(2) : "?"} softLoop=${softLoop}`
+        );
         if (
-          !shouldClickToPlayVideo({
+          shouldSoftLoopAfterEnded({
+            softLoop,
+            ended: true,
             disposed,
             fallingBack,
-            ended: video.ended,
-            wasPausedBeforeGesture,
-            isPausedNow: video.paused,
+            reviving: revivingFromEnded,
           })
         ) {
-          if (!video.paused) userPaused = false;
+          // Soft repeat: new element from t=0 (not native loop).
+          userPaused = false;
+          reviveVideoFromStart("soft-loop-ended");
           return;
         }
+        userPaused = true; // stopped at end; wait for explicit play
+      },
+      vOpts
+    );
+    video.addEventListener(
+      "pause",
+      () => {
+        if (disposed || fallingBack || revivingFromEnded) return;
+        if (video.ended || reachedEnded) {
+          reachedEnded = true;
+          diag("pause at ended — no auto-resume");
+          return;
+        }
+        const now = performance.now();
+        if (isUserIntentionalPause(lastMediaGestureAt, now)) {
+          userPaused = true;
+          clearResumeTimer();
+          diag("user paused (gesture-linked)");
+          return;
+        }
+        diag(`pause event unintentional ct=${video.currentTime.toFixed(2)} — auto-resume`);
         userPaused = false;
-        diag("click-to-play (was paused before gesture)");
-        void video.play().catch((e) => diag(`click-to-play reject: ${e}`));
-      }, 0);
-    },
-    vOpts
-  );
-  document.addEventListener(
-    "visibilitychange",
-    () => {
-      if (document.visibilityState === "visible") {
-        scheduleAutoResume("visibility");
-      }
-    },
-    vOpts
-  );
+        scheduleAutoResume("pause-event");
+      },
+      vOpts
+    );
+    video.addEventListener(
+      "play",
+      () => {
+        if (disposed || fallingBack || revivingFromEnded) return;
+        if (reachedEnded || video.ended) {
+          reviveVideoFromStart("play-event-after-ended");
+          return;
+        }
+        if (!video.paused) {
+          userPaused = false;
+          if (video.currentTime > 0.05) reachedEnded = false;
+        }
+      },
+      vOpts
+    );
+    video.addEventListener(
+      "click",
+      () => {
+        window.setTimeout(() => {
+          if (disposed || fallingBack || revivingFromEnded) return;
+          if (reachedEnded || video.ended) {
+            reviveVideoFromStart("click-after-ended");
+            return;
+          }
+          if (
+            !shouldClickToPlayVideo({
+              disposed,
+              fallingBack,
+              ended: video.ended,
+              wasPausedBeforeGesture,
+              isPausedNow: video.paused,
+            })
+          ) {
+            if (!video.paused) userPaused = false;
+            return;
+          }
+          userPaused = false;
+          diag("click-to-play (was paused before gesture)");
+          void video.play().catch((e) => diag(`click-to-play reject: ${e}`));
+        }, 0);
+      },
+      vOpts
+    );
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        if (document.visibilityState === "visible") {
+          scheduleAutoResume("visibility");
+        }
+      },
+      vOpts
+    );
+  };
+
+  bindVideoListeners();
+
 
   // Bare video/mp4 often returns "maybe" without H.264; that path can stall WebKitGTK.
   const supported = hostLikelySupportsAV("video", media.mime);
@@ -1998,9 +2138,12 @@ function attachMediaElement(
   // Immediate placeholder so the user always sees the accordion under black controls.
   ensureDiagnosticsPanel(true);
   return {
-    el: video,
+    get el() {
+      return video;
+    },
     cleanup: () => {
       disposed = true;
+      revivingFromEnded = false;
       removeDiagnosticsPanel();
       clearMetaTimer();
       clearStallTimer();
