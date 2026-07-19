@@ -342,6 +342,16 @@ export function isUserIntentionalPause(
  * If it was playing, the same click is a pause intent — do not force play.
  */
 /** Diagnostics accordion closed: always hard-kick unless terminal. */
+/** Same object identity → keep live <video>; do not tear down. */
+export function shouldRemountCachedMedia(
+  mounted: object | null | undefined,
+  next: object | null | undefined
+): boolean {
+  if (!next) return false;
+  if (!mounted) return true;
+  return mounted !== next;
+}
+
 export function shouldHardKickPlaybackOnDiagnosticsClose(input: {
   disposed: boolean;
   fallingBack: boolean;

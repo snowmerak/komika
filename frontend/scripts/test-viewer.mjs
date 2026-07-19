@@ -109,6 +109,7 @@ try {
   isUserIntentionalPause,
   shouldClickToPlayVideo,
   shouldHardKickPlaybackOnDiagnosticsClose,
+  shouldRemountCachedMedia,
     mediaPlaybackFallbackMessage,
     shouldLoadMediaDelivery,
     shouldRetainCachedMedia,
@@ -923,6 +924,16 @@ try {
     }),
     true
   );
+  // cached hit: same object must not remount (avoids video restart)
+  {
+    const a = { url: "http://x/1" };
+    assert.equal(shouldRemountCachedMedia(null, a), true);
+    assert.equal(shouldRemountCachedMedia(a, a), false);
+    assert.equal(shouldRemountCachedMedia(a, { url: "http://x/1" }), true);
+    // fallback mutates same object url — still no remount
+    a.url = "http://x/2";
+    assert.equal(shouldRemountCachedMedia(a, a), false);
+  }
   // controls may still say "playing" (paused=false) — kick anyway
   assert.equal(
     shouldHardKickPlaybackOnDiagnosticsClose({
@@ -983,6 +994,30 @@ try {
       fallbackStage: "none",
     }).action,
     "noop"
+  );
+  // mid-play waiting must not remux (progressAccum may look low after buffer)
+  assert.equal(
+    decideStallWatchdog({
+      disposed: false,
+      fallingBack: false,
+      hadMeaningfulPlayback: true,
+      videoWidth: 1280,
+      progressAccum: 0.1,
+      fallbackStage: "none",
+    }).action,
+    "noop"
+  );
+  // already remuxed once: further stall watchdog should not go backwards to remux
+  assert.equal(
+    decideStallWatchdog({
+      disposed: false,
+      fallingBack: false,
+      hadMeaningfulPlayback: false,
+      videoWidth: 1280,
+      progressAccum: 0,
+      fallbackStage: "remux",
+    }).action,
+    "reencode"
   );
 
 

@@ -32,6 +32,7 @@ import {
   isUserIntentionalPause,
   shouldClickToPlayVideo,
   shouldHardKickPlaybackOnDiagnosticsClose,
+  shouldRemountCachedMedia,
 } from "./viewer";
 import { combinedFallbackMessage, transcodeWithWasm, WASM_TRANSCODE_MAX_BYTES } from "./media_wasm";
 import {
@@ -1239,7 +1240,8 @@ function attachMediaElement(
   video.className = `${className} reader__media reader__media--video`;
   video.controls = true;
   video.muted = true;
-  video.loop = true;
+  // WebKitGTK + some phone MP4s rewind mid-file when loop=true (observed ~8s→0).
+  video.loop = false;
   video.playsInline = true;
   video.preload = "auto";
   video.setAttribute("playsinline", "");
@@ -1357,8 +1359,9 @@ function attachMediaElement(
     }
     userPaused = false;
     clearResumeTimer();
+    const keepAt = video.currentTime;
     diag(
-      `diagnostics-closed kick paused=${video.paused} ended=${video.ended} ct=${video.currentTime.toFixed(2)} rs=${video.readyState}`
+      `diagnostics-closed kick paused=${video.paused} ended=${video.ended} ct=${keepAt.toFixed(2)} rs=${video.readyState}`
     );
     try {
       video.pause();
@@ -1366,8 +1369,17 @@ function attachMediaElement(
       /* ignore */
     }
     // Next task: play after pause so WebKit applies both state transitions.
+    // Restore currentTime if the engine rewound on pause/play.
     window.setTimeout(() => {
       if (disposed || fallingBack || video.ended || userPaused) return;
+      try {
+        if (keepAt > 0.05 && Math.abs(video.currentTime - keepAt) > 0.35) {
+          video.currentTime = keepAt;
+          diag(`diagnostics-closed restore ct=${keepAt.toFixed(2)}`);
+        }
+      } catch {
+        /* ignore */
+      }
       void video.play().catch((e) => diag(`diagnostics-closed play() reject: ${e}`));
     }, 0);
   };
@@ -1524,8 +1536,11 @@ function attachMediaElement(
 
   const armStallWatchdog = (): void => {
     clearStallTimer();
+    // Only for the initial native source before we know playback works.
+    if (hadMeaningfulPlayback || fallbackStage !== "none") return;
     // 3.5s without meaningful forward progress → diagnostics + remux/reencode.
     stallTimer = window.setTimeout(() => {
+      if (hadMeaningfulPlayback || fallbackStage !== "none" || fallingBack) return;
       diag(
         `stall-watchdog ct=${video.currentTime.toFixed(2)} w=${video.videoWidth}x${video.videoHeight} rs=${video.readyState} progressed=${progressAccum.toFixed(2)} err=${video.error?.code ?? "null"} stage=${fallbackStage}`
       );
@@ -1569,20 +1584,20 @@ function attachMediaElement(
     );
     if (name === "waiting" || name === "stalled") {
       if (waitingSince == null) waitingSince = performance.now();
+      // After healthy playback, brief buffering is normal — log only.
+      // Never clear hadMeaningfulPlayback / remux mid-play (that restarts from 0).
+      if (hadMeaningfulPlayback || fallbackStage !== "none") {
+        return;
+      }
       ensureDiagnosticsPanel(true);
-      // Prolonged wait after we thought we were healthy → re-show + fallback ladder.
       const waited = waitingSince != null ? performance.now() - waitingSince : 0;
       if (waited > 2500 && !fallingBack) {
-        if (hadMeaningfulPlayback) {
-          // Mid-play freeze: allow fallback again.
-          hadMeaningfulPlayback = false;
-        }
         forceStallFallback(`${name} for ${(waited / 1000).toFixed(1)}s`);
       }
     } else if (name === "canplay" || name === "canplaythrough" || name === "playing") {
       waitingSince = null;
     } else if (name === "emptied" || name === "suspend") {
-      ensureDiagnosticsPanel(true);
+      if (!hadMeaningfulPlayback) ensureDiagnosticsPanel(true);
     }
   };
 
@@ -1666,20 +1681,33 @@ function attachMediaElement(
 
   const seekWhenReady = (startAt: number): void => {
     if (!(startAt > 0) || !Number.isFinite(startAt)) return;
+    let attempts = 0;
     const doSeek = (): void => {
+      attempts += 1;
       try {
         const dur = video.duration;
-        if (Number.isFinite(dur) && startAt >= dur) {
-          video.currentTime = Math.max(0, dur - 0.05);
-        } else {
-          video.currentTime = startAt;
+        const target =
+          Number.isFinite(dur) && startAt >= dur ? Math.max(0, dur - 0.05) : startAt;
+        video.currentTime = target;
+        diag(`seekWhenReady → ${target.toFixed(2)} (attempt ${attempts})`);
+        // Some WebKit builds ignore the first seek; retry once after a tick.
+        if (attempts < 3) {
+          window.setTimeout(() => {
+            if (disposed) return;
+            if (Math.abs(video.currentTime - target) > 0.5) {
+              try {
+                video.currentTime = target;
+              } catch {
+                /* ignore */
+              }
+            }
+          }, 50 * attempts);
         }
       } catch {
         /* ignore seek failures */
       }
       void video.play().catch(() => {});
     };
-    // readyState >= 1 (HAVE_METADATA): seek immediately; else wait (register BEFORE load()).
     if (video.readyState >= 1) {
       doSeek();
       return;
@@ -3218,7 +3246,14 @@ function mountSingleReader(
     leftZone.hidden = !showZones;
     rightZone.hidden = !showZones;
   };
+  // Track the CachedMedia object currently attached. loadPages after a cache hit
+  // used to call showMedia again with the same object and tear down a live <video>
+  // (restart from 0). Fallback mutates url on the same object via applyVideoSource
+  // without going through showMedia — identity skip is correct.
+  let mountedMedia: CachedMedia | null = null;
   const showMedia = (media: CachedMedia): void => {
+    if (!shouldRemountCachedMedia(mountedMedia, media)) return;
+    mountedMedia = media;
     mediaCleanup?.();
     const attached = attachMediaElement(
       mediaHost,
@@ -3231,7 +3266,10 @@ function mountSingleReader(
         applyTransform();
       }
     );
-    mediaCleanup = attached.cleanup;
+    mediaCleanup = () => {
+      mountedMedia = null;
+      attached.cleanup();
+    };
   };
 
   const ro = new ResizeObserver(() => applyTransform());
