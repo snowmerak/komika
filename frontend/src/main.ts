@@ -25,6 +25,9 @@ import {
   type Size,
   type ViewMode,
   type ViewPreferences,
+  isMeaningfulVideoProgress,
+  accumulateVideoProgress,
+  decideStallWatchdog,
 } from "./viewer";
 import { combinedFallbackMessage, transcodeWithWasm, WASM_TRANSCODE_MAX_BYTES } from "./media_wasm";
 import {
@@ -1234,7 +1237,7 @@ function attachMediaElement(
   video.muted = true;
   video.loop = true;
   video.playsInline = true;
-  video.preload = "metadata";
+  video.preload = "auto";
   video.setAttribute("playsinline", "");
   video.setAttribute("aria-label", alt);
   video.dataset.mediaUrl = media.url;
@@ -1242,11 +1245,16 @@ function attachMediaElement(
   let disposed = false;
   let fallbackAttempted = false;
   let fallingBack = false;
+  let fallbackStage: "none" | "remux" | "reencode" | "done" = "none";
   let fallbackAbort: AbortController | null = null;
   let ownedWasmBlobUrl: string | null = null;
   let metaTimer: number | null = null;
-  /** True once native (or fallback) media has produced usable frames / time. */
+  /** True once native (or fallback) media has produced usable forward progress. */
   let hadMeaningfulPlayback = false;
+  let progressLastTime = Number.NaN;
+  let progressAccum = 0;
+  let stallTimer: number | null = null;
+  let waitingSince: number | null = null;
   const diagLines: string[] = [];
   const diagT0 = performance.now();
   let diagPanel: HTMLElement | null = null;
@@ -1256,7 +1264,6 @@ function attachMediaElement(
     const line = `${ms}ms ${msg}`;
     diagLines.push(line);
     if (diagLines.length > 80) diagLines.splice(0, diagLines.length - 80);
-    // Live-update open accordion body if present.
     const body = diagPanel?.querySelector(".reader__media-diagnostics-body");
     if (body) body.textContent = formatMediaDiagnostics(diagLines);
   };
@@ -1268,13 +1275,33 @@ function attachMediaElement(
     }
   };
 
+  const clearStallTimer = (): void => {
+    if (stallTimer != null) {
+      window.clearTimeout(stallTimer);
+      stallTimer = null;
+    }
+  };
+
   const removeDiagnosticsPanel = (): void => {
     diagPanel?.remove();
     diagPanel = null;
+    host.classList.remove("reader__media-host--diagnostics");
+  };
+
+  const mountDiagnosticsPanel = (): void => {
+    if (!diagPanel) return;
+    host.classList.add("reader__media-host--diagnostics");
+    // Overlay sits as first child so it paints above the video without :has().
+    if (diagPanel.parentElement !== host) {
+      host.insertBefore(diagPanel, host.firstChild);
+    } else if (host.firstChild !== diagPanel) {
+      host.insertBefore(diagPanel, host.firstChild);
+    }
   };
 
   const ensureDiagnosticsPanel = (open: boolean): void => {
-    if (disposed || hadMeaningfulPlayback) {
+    if (disposed) return;
+    if (hadMeaningfulPlayback && !open) {
       removeDiagnosticsPanel();
       return;
     }
@@ -1298,62 +1325,129 @@ function attachMediaElement(
       const body = diagPanel.querySelector(".reader__media-diagnostics-body");
       if (body) body.textContent = formatMediaDiagnostics(diagLines);
     }
-    // Prefer sibling under host (video + panel).
-    if (diagPanel.parentElement !== host) {
-      host.append(diagPanel);
-    }
+    mountDiagnosticsPanel();
+  };
+
+  const resetProgressTracking = (): void => {
+    hadMeaningfulPlayback = false;
+    progressLastTime = Number.NaN;
+    progressAccum = 0;
+    waitingSince = null;
   };
 
   const markMeaningfulPlayback = (reason: string): void => {
     if (hadMeaningfulPlayback) return;
     hadMeaningfulPlayback = true;
-    diag(`ok meaningful playback (${reason})`);
+    waitingSince = null;
+    clearStallTimer();
+    diag(`ok meaningful playback (${reason}) progressed=${progressAccum.toFixed(2)}s`);
     removeDiagnosticsPanel();
   };
 
   const showVideoError = (message: string): void => {
     if (disposed) return;
     clearMetaTimer();
+    clearStallTimer();
     diag(`error-ui: ${message}`);
     const card = makeUnavailableMediaCard(message, media.url, formatMediaDiagnostics(diagLines));
     card.className = `${className} ${card.className}`;
     host.replaceChildren(card);
-    // Error card owns diagnostics; drop live panel ref.
     diagPanel = null;
     onSized({ width: 16, height: 9 });
   };
 
+  /** Black controls / silent decode stall: climb remux → reencode. */
+  const forceStallFallback = (why: string): void => {
+    const decision = decideStallWatchdog({
+      disposed,
+      fallingBack,
+      hadMeaningfulPlayback,
+      videoWidth: video.videoWidth,
+      progressAccum,
+      fallbackStage,
+    });
+    const resumeAt = video.currentTime > 0 ? video.currentTime : 0;
+    diag(
+      `stall-fallback: ${why} decision=${decision.action} stage=${fallbackStage} ct=${resumeAt.toFixed(2)} progressed=${progressAccum.toFixed(2)}`
+    );
+    if (decision.action === "noop") return;
+    if (decision.action === "mark-ok") {
+      markMeaningfulPlayback(why);
+      return;
+    }
+    if (decision.openDiagnostics) ensureDiagnosticsPanel(true);
+    if (decision.action === "remux") {
+      tryTranscodeFallback({ stage: "remux", resumeAt });
+      return;
+    }
+    if (decision.action === "reencode") {
+      tryTranscodeFallback({ stage: "reencode", resumeAt });
+      return;
+    }
+    showVideoError(decision.message);
+  };
+
+  const armStallWatchdog = (): void => {
+    clearStallTimer();
+    // 3.5s without meaningful forward progress → diagnostics + remux/reencode.
+    stallTimer = window.setTimeout(() => {
+      diag(
+        `stall-watchdog ct=${video.currentTime.toFixed(2)} w=${video.videoWidth}x${video.videoHeight} rs=${video.readyState} progressed=${progressAccum.toFixed(2)} err=${video.error?.code ?? "null"} stage=${fallbackStage}`
+      );
+      forceStallFallback("no forward progress within 3.5s");
+    }, 3500);
+  };
+
   const onMeta = (): void => {
-    clearMetaTimer();
+    // Do NOT clear stall watchdog here — metadata without progress is the failure mode.
     diag(
       `loadedmetadata w=${video.videoWidth}x${video.videoHeight} rs=${video.readyState} ns=${video.networkState} dur=${Number.isFinite(video.duration) ? video.duration.toFixed(2) : "?"}`
     );
     if (video.videoWidth > 0 && video.videoHeight > 0) {
-      markMeaningfulPlayback("metadata-size");
       onSized({ width: video.videoWidth, height: video.videoHeight });
-    } else {
-      ensureDiagnosticsPanel(false);
     }
+    ensureDiagnosticsPanel(true);
   };
 
   const onPlaying = (): void => {
-    diag(`playing ct=${video.currentTime.toFixed(2)} w=${video.videoWidth} rs=${video.readyState}`);
-    if (video.currentTime > 0 || video.videoWidth > 0) {
-      markMeaningfulPlayback("playing");
-    } else {
-      ensureDiagnosticsPanel(false);
-    }
+    diag(`playing ct=${video.currentTime.toFixed(2)} w=${video.videoWidth}x${video.videoHeight} rs=${video.readyState}`);
+    ensureDiagnosticsPanel(!hadMeaningfulPlayback);
   };
 
   const onTimeUpdate = (): void => {
-    if (video.currentTime >= 0.2) {
-      if (video.videoWidth > 0) {
-        markMeaningfulPlayback(`timeupdate ct=${video.currentTime.toFixed(2)}`);
-      } else if (video.currentTime >= 0.5) {
-        // Audio-only / black frames: keep diagnostics visible.
-        diag(`timeupdate no-video-frames ct=${video.currentTime.toFixed(2)} w=0`);
-        ensureDiagnosticsPanel(true);
+    const next = accumulateVideoProgress(progressLastTime, video.currentTime, progressAccum);
+    progressLastTime = next.lastTime;
+    progressAccum = next.progressed;
+    if (isMeaningfulVideoProgress(video.videoWidth, progressAccum)) {
+      markMeaningfulPlayback(
+        `timeupdate ct=${video.currentTime.toFixed(2)} w=${video.videoWidth}x${video.videoHeight} progressed=${progressAccum.toFixed(2)}`
+      );
+      return;
+    }
+  };
+
+  const onDiagEvent = (name: string): void => {
+    if (disposed) return;
+    const er = video.error;
+    diag(
+      `${name} ct=${video.currentTime.toFixed(2)} w=${video.videoWidth}x${video.videoHeight} rs=${video.readyState} ns=${video.networkState} progressed=${progressAccum.toFixed(2)} err=${er?.code ?? "null"}`
+    );
+    if (name === "waiting" || name === "stalled") {
+      if (waitingSince == null) waitingSince = performance.now();
+      ensureDiagnosticsPanel(true);
+      // Prolonged wait after we thought we were healthy → re-show + fallback ladder.
+      const waited = waitingSince != null ? performance.now() - waitingSince : 0;
+      if (waited > 2500 && !fallingBack) {
+        if (hadMeaningfulPlayback) {
+          // Mid-play freeze: allow fallback again.
+          hadMeaningfulPlayback = false;
+        }
+        forceStallFallback(`${name} for ${(waited / 1000).toFixed(1)}s`);
       }
+    } else if (name === "canplay" || name === "canplaythrough" || name === "playing") {
+      waitingSince = null;
+    } else if (name === "emptied" || name === "suspend") {
+      ensureDiagnosticsPanel(true);
     }
   };
 
@@ -1385,18 +1479,17 @@ function attachMediaElement(
     media.streamToken = token;
     video.dataset.mediaUrl = media.url;
     // New source — wait for its own playback evidence.
-    hadMeaningfulPlayback = false;
+    resetProgressTracking();
     diag(`applySource delivery=${delivery} mime=${mime} url=${url.slice(0, 96)}`);
     video.src = media.url;
     video.load();
-    // Loading card may have replaced host children; remount the video element.
     if (video.parentElement !== host) {
       host.replaceChildren(video);
-      // Keep diagnostics under the video when remounting.
-      if (diagPanel) host.append(diagPanel);
+      mountDiagnosticsPanel();
     }
     void video.play().catch((e) => diag(`play() reject: ${e}`));
-    ensureDiagnosticsPanel(false);
+    ensureDiagnosticsPanel(true);
+    armStallWatchdog();
   };
 
   const tryWasmVideoFallback = async (priorErr: unknown): Promise<void> => {
@@ -1418,7 +1511,19 @@ function attachMediaElement(
     if (disposed) return;
     const card = makeLoadingMediaCard(message, media.url);
     card.className = `${className} ${card.className}`;
+    // Preserve live diagnostics so stall vs "converting" is visible.
     host.replaceChildren(card);
+    if (diagPanel) {
+      // Detach/re-attach after replaceChildren wiped host.
+      diagPanel.remove();
+      host.append(card);
+      host.insertBefore(diagPanel, host.firstChild);
+      host.classList.add("reader__media-host--diagnostics");
+      const body = diagPanel.querySelector(".reader__media-diagnostics-body");
+      if (body) body.textContent = formatMediaDiagnostics(diagLines);
+      const d = diagPanel.querySelector("details");
+      if (d) d.open = true;
+    }
     onSized({ width: 16, height: 9 });
   };
 
@@ -1477,6 +1582,7 @@ function attachMediaElement(
 
     fallingBack = true;
     clearMetaTimer();
+    clearStallTimer();
     const knownSize = typeof media.sizeBytes === "number" && media.sizeBytes > 0 ? media.sizeBytes : Infinity;
     const allowWasm =
       media.delivery !== "stream" &&
@@ -1605,11 +1711,19 @@ function attachMediaElement(
   const unmuteOnGesture = (): void => {
     video.muted = false;
   };
-  video.addEventListener("loadedmetadata", onMeta);
-  video.addEventListener("playing", onPlaying);
-  video.addEventListener("timeupdate", onTimeUpdate);
-  video.addEventListener("error", onError);
-  video.addEventListener("pointerdown", unmuteOnGesture, { once: true });
+  const videoListenAbort = new AbortController();
+  const vOpts: AddEventListenerOptions = { signal: videoListenAbort.signal };
+  video.addEventListener("loadedmetadata", onMeta, vOpts);
+  video.addEventListener("playing", onPlaying, vOpts);
+  video.addEventListener("timeupdate", onTimeUpdate, vOpts);
+  video.addEventListener("error", onError, vOpts);
+  video.addEventListener("waiting", () => onDiagEvent("waiting"), vOpts);
+  video.addEventListener("stalled", () => onDiagEvent("stalled"), vOpts);
+  video.addEventListener("suspend", () => onDiagEvent("suspend"), vOpts);
+  video.addEventListener("emptied", () => onDiagEvent("emptied"), vOpts);
+  video.addEventListener("canplay", () => onDiagEvent("canplay"), vOpts);
+  video.addEventListener("canplaythrough", () => onDiagEvent("canplaythrough"), vOpts);
+  video.addEventListener("pointerdown", unmuteOnGesture, { once: true, signal: videoListenAbort.signal });
 
   // Bare video/mp4 often returns "maybe" without H.264; that path can stall WebKitGTK.
   const supported = hostLikelySupportsAV("video", media.mime);
@@ -1622,40 +1736,29 @@ function attachMediaElement(
   } else {
     video.src = media.url;
     void video.play().catch((e) => diag(`play() reject: ${e}`));
-    ensureDiagnosticsPanel(false);
-    // If metadata never arrives (codec stall), force fallback.
+    ensureDiagnosticsPanel(true);
+    armStallWatchdog();
+    // No metadata at all (harder stall than black-controls).
     metaTimer = window.setTimeout(() => {
-      if (disposed || fallbackStage !== "none") return;
-      if (video.videoWidth > 0 || video.readyState >= 1) return;
+      if (disposed || fallbackStage !== "none" || hadMeaningfulPlayback) return;
+      if (video.readyState >= 1) return;
       diag("metadata timeout 2500ms → remux fallback");
-      tryTranscodeFallback({ stage: "remux", resumeAt: 0 });
+      forceStallFallback("no metadata");
     }, 2500);
   }
 
   host.append(video);
-  // Black/controls-only stall: surface diagnostics if no frames after a few seconds.
-  window.setTimeout(() => {
-    if (disposed || hadMeaningfulPlayback) return;
-    if (video.videoWidth > 0 && video.currentTime >= 0.2) {
-      markMeaningfulPlayback("delayed-check");
-      return;
-    }
-    diag(
-      `stall-check ct=${video.currentTime.toFixed(2)} w=${video.videoWidth}x${video.videoHeight} rs=${video.readyState} err=${video.error?.code ?? "null"}`
-    );
-    ensureDiagnosticsPanel(true);
-  }, 4000);
+  // Immediate placeholder so the user always sees the accordion under black controls.
+  ensureDiagnosticsPanel(true);
   return {
     el: video,
     cleanup: () => {
       disposed = true;
+      removeDiagnosticsPanel();
       clearMetaTimer();
+      clearStallTimer();
       fallbackAbort?.abort();
-      video.removeEventListener("loadedmetadata", onMeta);
-      video.removeEventListener("playing", onPlaying);
-      video.removeEventListener("timeupdate", onTimeUpdate);
-      video.removeEventListener("error", onError);
-      video.removeEventListener("pointerdown", unmuteOnGesture);
+      videoListenAbort.abort();
       releaseHtmlMediaElement(video);
       if (ownedWasmBlobUrl && media.url !== ownedWasmBlobUrl) {
         URL.revokeObjectURL(ownedWasmBlobUrl);

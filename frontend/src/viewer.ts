@@ -268,6 +268,79 @@ export function mediaKindForMime(mime: string): MediaKind | null {
   return null;
 }
 
+/**
+ * True when playback has advanced enough to treat the stream as healthy.
+ * Uses accumulated forward delta so seek/resume start offsets don't false-trigger.
+ */
+export function isMeaningfulVideoProgress(
+  videoWidth: number,
+  progressedSeconds: number,
+  minProgress = 0.5
+): boolean {
+  return videoWidth > 0 && progressedSeconds >= minProgress;
+}
+
+/** Accumulate only forward clock movement (ignore seeks backward / resets). */
+export function accumulateVideoProgress(
+  lastTime: number,
+  currentTime: number,
+  progressed: number
+): { lastTime: number; progressed: number } {
+  if (!(currentTime >= 0) || !Number.isFinite(currentTime)) {
+    return { lastTime, progressed };
+  }
+  if (!(lastTime >= 0) || !Number.isFinite(lastTime)) {
+    return { lastTime: currentTime, progressed };
+  }
+  const delta = currentTime - lastTime;
+  // Ignore large jumps (seek) and backward steps; count small forward ticks.
+  if (delta > 0 && delta < 2) {
+    return { lastTime: currentTime, progressed: progressed + delta };
+  }
+  return { lastTime: currentTime, progressed };
+}
+
+export type VideoFallbackStage = "none" | "remux" | "reencode" | "done";
+
+export type StallWatchdogDecision =
+  | { action: "noop" }
+  | { action: "mark-ok" }
+  | { action: "remux"; openDiagnostics: true }
+  | { action: "reencode"; openDiagnostics: true }
+  | { action: "error"; openDiagnostics: true; message: string };
+
+/**
+ * Pure decision for the black-controls stall timer.
+ * Call after ~3.5s without confirmed forward progress (or on prolonged waiting).
+ */
+export function decideStallWatchdog(input: {
+  disposed: boolean;
+  fallingBack: boolean;
+  hadMeaningfulPlayback: boolean;
+  videoWidth: number;
+  progressAccum: number;
+  fallbackStage: VideoFallbackStage;
+  minProgress?: number;
+}): StallWatchdogDecision {
+  if (input.disposed || input.fallingBack) return { action: "noop" };
+  if (input.hadMeaningfulPlayback) return { action: "noop" };
+  if (isMeaningfulVideoProgress(input.videoWidth, input.progressAccum, input.minProgress ?? 0.5)) {
+    return { action: "mark-ok" };
+  }
+  if (input.fallbackStage === "none") {
+    return { action: "remux", openDiagnostics: true };
+  }
+  if (input.fallbackStage === "remux") {
+    return { action: "reencode", openDiagnostics: true };
+  }
+  // reencode or done — nowhere left to climb
+  return {
+    action: "error",
+    openDiagnostics: true,
+    message: "Playback stalled with no video progress after fallback.",
+  };
+}
+
 /** Stop playback and drop the media resource so streams/blobs can be reclaimed. */
 export function releaseHtmlMediaElement(el: {
   pause(): void;

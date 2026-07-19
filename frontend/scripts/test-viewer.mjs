@@ -101,6 +101,9 @@ try {
     cacheIndices,
     orderPageLoadIndices,
     mediaKindForMime,
+  isMeaningfulVideoProgress,
+  accumulateVideoProgress,
+  decideStallWatchdog,
     mediaPlaybackFallbackMessage,
     shouldLoadMediaDelivery,
     shouldRetainCachedMedia,
@@ -809,6 +812,94 @@ try {
     releaseHtmlMediaElement(el);
     assert.deepEqual(calls, ["pause", "removeAttribute:src", "load"]);
   }
+
+  // --- isMeaningfulVideoProgress / accumulateVideoProgress ---
+  // Black controls with metadata size must NOT count as success.
+  assert.equal(isMeaningfulVideoProgress(1280, 0), false);
+  assert.equal(isMeaningfulVideoProgress(1280, 0.49), false);
+  assert.equal(isMeaningfulVideoProgress(0, 1), false);
+  assert.equal(isMeaningfulVideoProgress(1280, 0.5), true);
+  // Seek/resume start offset is not progress; only forward deltas count.
+  let acc = { lastTime: Number.NaN, progressed: 0 };
+  acc = accumulateVideoProgress(acc.lastTime, 12.0, acc.progressed); // seed
+  assert.equal(acc.progressed, 0);
+  acc = accumulateVideoProgress(acc.lastTime, 12.2, acc.progressed);
+  assert.ok(acc.progressed >= 0.19 && acc.progressed <= 0.21);
+  acc = accumulateVideoProgress(acc.lastTime, 0.0, acc.progressed); // seek back
+  assert.ok(acc.progressed >= 0.19 && acc.progressed <= 0.21);
+  acc = accumulateVideoProgress(acc.lastTime, 0.4, acc.progressed);
+  assert.ok(acc.progressed >= 0.59);
+  assert.equal(isMeaningfulVideoProgress(720, acc.progressed), true);
+
+  // --- decideStallWatchdog (black-controls → remux) ---
+  assert.deepEqual(
+    decideStallWatchdog({
+      disposed: false,
+      fallingBack: false,
+      hadMeaningfulPlayback: false,
+      videoWidth: 1280,
+      progressAccum: 0,
+      fallbackStage: "none",
+    }),
+    { action: "remux", openDiagnostics: true }
+  );
+  assert.deepEqual(
+    decideStallWatchdog({
+      disposed: false,
+      fallingBack: false,
+      hadMeaningfulPlayback: false,
+      videoWidth: 1280,
+      progressAccum: 0,
+      fallbackStage: "remux",
+    }),
+    { action: "reencode", openDiagnostics: true }
+  );
+  assert.equal(
+    decideStallWatchdog({
+      disposed: false,
+      fallingBack: false,
+      hadMeaningfulPlayback: false,
+      videoWidth: 1280,
+      progressAccum: 0,
+      fallbackStage: "reencode",
+    }).action,
+    "error"
+  );
+  assert.equal(
+    decideStallWatchdog({
+      disposed: false,
+      fallingBack: false,
+      hadMeaningfulPlayback: false,
+      videoWidth: 1280,
+      progressAccum: 0.6,
+      fallbackStage: "none",
+    }).action,
+    "mark-ok"
+  );
+  assert.equal(
+    decideStallWatchdog({
+      disposed: false,
+      fallingBack: true,
+      hadMeaningfulPlayback: false,
+      videoWidth: 1280,
+      progressAccum: 0,
+      fallbackStage: "none",
+    }).action,
+    "noop"
+  );
+  assert.equal(
+    decideStallWatchdog({
+      disposed: false,
+      fallingBack: false,
+      hadMeaningfulPlayback: true,
+      videoWidth: 1280,
+      progressAccum: 0,
+      fallbackStage: "none",
+    }).action,
+    "noop"
+  );
+
+
   console.log("test-viewer: ok");
 } finally {
   rmSync(outDir, { recursive: true, force: true });

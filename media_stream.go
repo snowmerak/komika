@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -173,6 +175,34 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 		pending = prepared.pendingReleased
 	}
 	_ = pending
+
+	// WebKitGTK often black-screens on non-faststart MP4 over HTTP (moov at end).
+	// Phone camera exports (Android mp42) commonly need a cheap remux first.
+	if ps.mime == "video/mp4" || ps.mime == "video/quicktime" {
+		if fast, fsErr := mp4MoovBeforeMdat(streamPath); fsErr == nil && !fast {
+			if fixed, fixErr := s.ensureFaststartMP4(streamPath, ps.mime); fixErr == nil && fixed != "" {
+				log.Printf("komika: auto faststart remux for %s", streamPath)
+				// If we replaced a non-temp source path, the new file is our temp.
+				if !temporary {
+					temporary = true
+					if st, e := os.Stat(fixed); e == nil {
+						ownedBytes = st.Size()
+					}
+				} else {
+					// replace previous temp
+					_ = os.Remove(streamPath)
+					if st, e := os.Stat(fixed); e == nil {
+						// adjust reservation roughly
+						ownedBytes = st.Size()
+					}
+				}
+				streamPath = fixed
+				if info, e := os.Stat(streamPath); e == nil {
+					modTime = info.ModTime()
+				}
+			}
+		}
+	}
 
 	token, err := mintStreamToken()
 	if err != nil {
@@ -384,7 +414,12 @@ func (s *ComicService) retireStreamEntryLocked(entry *streamEntry) {
 
 func (s *ComicService) removeStreamArtifactLocked(entry *streamEntry) {
 	if entry.temporary && entry.path != "" {
+		parent := filepath.Dir(entry.path)
 		_ = os.Remove(entry.path)
+		// ensureFaststartMP4 writes .../komika-faststart-*/faststart.mp4
+		if base := filepath.Base(parent); strings.HasPrefix(base, "komika-faststart-") {
+			_ = os.RemoveAll(parent)
+		}
 		s.archiveTempBytes -= entry.ownedBytes
 		if s.archiveTempBytes < 0 {
 			s.archiveTempBytes = 0
