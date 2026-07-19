@@ -337,6 +337,75 @@ tasks:
       - sh: docker info > /dev/null 2>&1
         msg: "Docker is required. Please install Docker first."
 
+  package:docker:setup:
+    summary: Builds Debian 13 packaging image for one arch (AppImage/NSIS)
+    desc: |
+      Builds komika-package:{{.ARCH}} from build/docker/Dockerfile.package (debian:trixie).
+      Native arch first. Non-host arch needs qemu/binfmt (Docker Desktop or tonistiigi/binfmt).
+
+      Usage: wails3 task package:docker:setup [ARCH=amd64|arm64]
+    vars:
+      ARCH: '{{.ARCH | default ARCH}}'
+      IMAGE_TAG: '{{.ARCH}}'
+    preconditions:
+      - sh: docker info > /dev/null 2>&1
+        msg: "Docker is required. Please install Docker first."
+    cmds:
+      - >-
+        docker build
+        --platform linux/{{.ARCH}}
+        -t komika-package:{{.IMAGE_TAG}}
+        -f build/docker/Dockerfile.package
+        build/docker/
+
+  package:docker:
+    summary: Packages linux/windows artifacts inside komika-package image
+    desc: |
+      Runs wails3 task package in komika-package:{{.ARCH}} with the repo bind-mounted at /src.
+      Linux packaging requires container CPU arch to match ARCH (GST inject / AppImage AI_ARCH).
+      Windows NSIS is pure Go + makensis; the task still runs komika-package:{{.ARCH}}
+      with --platform linux/{{.ARCH}} (build that image first).
+
+      Usage:
+        wails3 task package:docker GOOS=linux ARCH=arm64
+        wails3 task package:docker GOOS=windows ARCH=amd64
+
+      Build the image first: wails3 task package:docker:setup ARCH={{.ARCH}}
+      If AppImage tooling still needs FUSE after APPIMAGE_EXTRACT_AND_RUN=1, last resort:
+        add --device /dev/fuse --cap-add SYS_ADMIN to the docker run (not default).
+    vars:
+      GOOS: '{{.GOOS | default "linux"}}'
+      ARCH: '{{.ARCH | default ARCH}}'
+      IMAGE: 'komika-package:{{.ARCH}}'
+      # Generate Docker volume mounts: Go module cache + go.mod replace directives
+      DOCKER_MOUNTS:
+        sh: 'wails3 tool docker-mounts'
+    preconditions:
+      - sh: docker info > /dev/null 2>&1
+        msg: "Docker is required. Please install Docker first."
+      - sh: docker image inspect komika-package:{{.ARCH}} > /dev/null 2>&1
+        msg: |
+          Docker image 'komika-package:{{.ARCH}}' not found.
+          Build it first: wails3 task package:docker:setup ARCH={{.ARCH}}
+    cmds:
+      - mkdir -p bin
+      - >-
+        docker run --rm
+        --platform linux/{{.ARCH}}
+        -v "{{.ROOT_DIR}}:/src"
+        -w /src
+        -e APPIMAGE_EXTRACT_AND_RUN=1
+        {{.DOCKER_MOUNTS}}
+        komika-package:{{.ARCH}}
+        komika-package {{.GOOS}} {{.ARCH}}
+      - cmd: >-
+          docker run --rm -v "{{.ROOT_DIR}}:/app" alpine
+          chown -R $(id -u):$(id -g)
+          /app/bin
+          /app/build/linux/appimage
+          2>/dev/null || true
+        platforms: [linux, darwin]
+
   ios:device:list:
     summary: Lists connected iOS devices (UDIDs)
     cmds:

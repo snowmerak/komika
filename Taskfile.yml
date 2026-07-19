@@ -54,6 +54,26 @@ tasks:
     cmds:
       - task: common:setup:docker
 
+  package:docker:setup:
+    summary: Builds Debian 13 packaging image for one arch (AppImage/NSIS)
+    vars:
+      ARCH: '{{.ARCH | default ARCH}}'
+    cmds:
+      - task: common:package:docker:setup
+        vars:
+          ARCH: '{{.ARCH}}'
+
+  package:docker:
+    summary: Packages linux/windows artifacts inside komika-package image
+    vars:
+      GOOS: '{{.GOOS | default "linux"}}'
+      ARCH: '{{.ARCH | default ARCH}}'
+    cmds:
+      - task: common:package:docker
+        vars:
+          GOOS: '{{.GOOS}}'
+          ARCH: '{{.ARCH}}'
+
   build:server:
     summary: Builds the application in server mode (no GUI, HTTP server only)
     cmds:

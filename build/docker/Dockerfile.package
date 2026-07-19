@@ -1,0 +1,74 @@
+# Full packaging image for Komika (AppImage/deb/rpm/aur + Windows NSIS).
+# Debian 13 (trixie). Binary-only cross builds stay on Dockerfile.cross (bookworm + Zig).
+#
+# Build:
+#   docker build --platform linux/amd64 -t komika-package:amd64 -f build/docker/Dockerfile.package build/docker/
+#   docker build --platform linux/arm64 -t komika-package:arm64 -f build/docker/Dockerfile.package build/docker/
+#
+# Run (repo bind-mounted at /src):
+#   docker run --rm --platform linux/arm64 -v "$PWD:/src" -w /src \
+#     -e APPIMAGE_EXTRACT_AND_RUN=1 komika-package:arm64 \
+#     komika-package linux arm64
+
+FROM debian:trixie
+
+ARG TARGETARCH
+ARG GO_VERSION=1.26.0
+ARG WAILS_VERSION=v3.0.0-alpha2.117
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH=/usr/local/go/bin:/root/go/bin:$PATH \
+    APPIMAGE_EXTRACT_AND_RUN=1
+
+# Build tools, GTK4/WebKitGTK 6.0 (Wails CGO), AppImage GST inject host packages,
+# NSIS, Node. qemu-user-static + squashfs-tools: run static-pie AppImages under
+# foreign --platform (binfmt often fails on AppImage runtimes).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    git \
+    curl \
+    ca-certificates \
+    wget \
+    file \
+    desktop-file-utils \
+    xz-utils \
+    nodejs \
+    npm \
+    nsis \
+    squashfs-tools \
+    qemu-user-static \
+    libgtk-4-dev \
+    libwebkitgtk-6.0-dev \
+    gstreamer1.0-libav \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Official Go toolchain (go.mod requires go 1.25.0+; pin major track with Dockerfile.cross).
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) GO_ARCH=amd64 ;; \
+      arm64) GO_ARCH=arm64 ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" \
+      | tar -C /usr/local -xz; \
+    go version
+
+# Pin wails3 to the module version in go.mod (not @latest).
+RUN go install "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}" \
+    && wails3 version
+
+COPY package-entrypoint.sh /usr/local/bin/komika-package
+COPY run-appimage /usr/local/bin/run-appimage
+COPY seed-linuxdeploy-wrappers.sh /usr/local/bin/seed-linuxdeploy-wrappers
+RUN chmod +x /usr/local/bin/komika-package \
+    /usr/local/bin/run-appimage \
+    /usr/local/bin/seed-linuxdeploy-wrappers
+
+WORKDIR /src
+CMD ["bash"]

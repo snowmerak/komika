@@ -9,6 +9,16 @@ WORK="$(mktemp -d /tmp/komika-ai-gst-XXXXXX)"
 cleanup() { rm -rf "${WORK}"; }
 trap cleanup EXIT
 
+# Prefer run-appimage when present (Docker packaging under qemu). Falls back to
+# direct exec on native hosts.
+run_ai() {
+  if command -v run-appimage >/dev/null 2>&1; then
+    run-appimage "$@"
+  else
+    "$@"
+  fi
+}
+
 if [[ ! -f "${APPIMAGE}" ]]; then
   echo "AppImage not found: ${APPIMAGE}" >&2
   exit 1
@@ -18,7 +28,7 @@ echo "Injecting GStreamer plugins into ${APPIMAGE}"
 
 cd "${WORK}"
 chmod +x "${APPIMAGE}"
-"${APPIMAGE}" --appimage-extract >/dev/null
+run_ai "${APPIMAGE}" --appimage-extract >/dev/null
 APPDIR="${WORK}/squashfs-root"
 if [[ ! -d "${APPDIR}" ]]; then
   echo "extract failed" >&2
@@ -241,7 +251,7 @@ else
   AT="${WORK}/appimagetool.AppImage"
   wget -q -O "${AT}" "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${at_arch}.AppImage"
   chmod +x "${AT}"
-  ARCH="${at_arch}" "${AT}" --appimage-extract-and-run "${APPDIR}" "${OUT_TMP}"
+  ARCH="${at_arch}" run_ai "${AT}" --appimage-extract-and-run "${APPDIR}" "${OUT_TMP}"
 fi
 
 test -f "${OUT_TMP}"

@@ -82,6 +82,39 @@ wails3 task build GOOS=linux
 wails3 task package GOOS=darwin
 ```
 
+### Docker 패키징 (Debian 13 이미지)
+
+Linux AppImage/deb/rpm/aur 및 Windows NSIS 전체 패키징은 multi-arch `komika-package`
+이미지(`debian:trixie`) 안에서 돌릴 수 있습니다. 호스트에 맞는 툴체인이 없어도 됩니다.
+바이너리만 크로스 빌드할 때는 기존 `wails3 task setup:docker` → `wails-cross` 경로를 씁니다.
+
+```bash
+# 아키텍처별 패키징 이미지 빌드 (필요 시 둘 다)
+wails3 task package:docker:setup ARCH=amd64
+wails3 task package:docker:setup ARCH=arm64
+
+# Linux 패키지 (task는 komika-package:$ARCH + --platform linux/$ARCH 사용;
+# AppImage/GST inject도 컨테이너 CPU arch == ARCH 필요)
+wails3 task package:docker GOOS=linux ARCH=amd64   # → bin/komika-x86_64.AppImage, .deb, …
+wails3 task package:docker GOOS=linux ARCH=arm64   # → bin/komika-aarch64.AppImage, …
+
+# Windows NSIS (pure Go + makensis; task는 여전히 komika-package:$ARCH 필요)
+wails3 task package:docker GOOS=windows ARCH=amd64  # 이미지 :amd64 필요 → installer
+wails3 task package:docker GOOS=windows ARCH=arm64  # 이미지 :arm64 필요 → installer
+```
+
+결과물은 리포 바인드 마운트로 호스트 `bin/`에 남습니다. 호스트와 다른 arch는
+qemu/binfmt(Docker Desktop 또는 `tonistiigi/binfmt`)가 필요합니다. qemu 환경에서는
+이미지 안의 `run-appimage` / `qemu-user-static`으로 static-pie AppImage 도구를 실행합니다.
+
+수동 실행 예:
+
+```bash
+docker run --rm --platform linux/amd64 -v "$PWD:/src" -w /src \
+  -e APPIMAGE_EXTRACT_AND_RUN=1 komika-package:amd64 \
+  komika-package linux amd64
+```
+
 선택적 서버 모드 (네이티브 GUI 없음):
 
 ```bash

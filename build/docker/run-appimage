@@ -1,0 +1,104 @@
+#!/bin/sh
+# Run an AppImage, with fallback when the kernel/binfmt cannot exec static-pie
+# AppImage runtimes (common under qemu-user on foreign --platform).
+#
+# Usage: run-appimage <AppImage> [args...]
+set -eu
+
+if [ "$#" -lt 1 ]; then
+	echo "Usage: run-appimage <AppImage> [args...]" >&2
+	exit 1
+fi
+
+AI=$1
+shift
+
+if [ ! -f "$AI" ]; then
+	echo "run-appimage: not found: $AI" >&2
+	exit 1
+fi
+chmod +x "$AI" 2>/dev/null || true
+
+# Native / working binfmt: run directly.
+set +e
+"$AI" "$@"
+ec=$?
+set -e
+if [ "$ec" -eq 0 ]; then
+	exit 0
+fi
+# 126 = Command invoked cannot execute (Exec format error).
+if [ "$ec" -ne 126 ]; then
+	exit "$ec"
+fi
+
+host=$(uname -m)
+case "$host" in
+x86_64 | amd64) qemu=qemu-x86_64-static ;;
+aarch64 | arm64) qemu=qemu-aarch64-static ;;
+*)
+	echo "run-appimage: exec format error and no qemu mapping for host arch $host" >&2
+	exit "$ec"
+	;;
+esac
+
+if command -v "$qemu" >/dev/null 2>&1; then
+	exec "$qemu" "$AI" "$@"
+fi
+
+# Last resort: unsquashfs + AppRun (requires squashfs-tools).
+if ! command -v unsquashfs >/dev/null 2>&1; then
+	echo "run-appimage: exec format error; install qemu-user-static or squashfs-tools" >&2
+	exit "$ec"
+fi
+
+work=$(mktemp -d /tmp/run-appimage-XXXXXX)
+trap 'rm -rf "$work"' EXIT INT TERM
+
+offset=$(LC_ALL=C grep -aob 'hsqs' "$AI" | head -n1 | cut -d: -f1 || true)
+if [ -z "${offset:-}" ]; then
+	echo "run-appimage: squashfs magic not found in $AI" >&2
+	exit 1
+fi
+unsquashfs -o "$offset" -d "$work/root" "$AI" >/dev/null
+if [ ! -e "$work/root/AppRun" ]; then
+	echo "run-appimage: AppRun missing after unsquashfs" >&2
+	exit 1
+fi
+chmod +x "$work/root/AppRun" 2>/dev/null || true
+
+# Drop AppImage runtime flags; remaining args go to AppRun.
+filtered=
+extract_only=0
+for arg in "$@"; do
+	case "$arg" in
+	--appimage-extract-and-run) ;;
+	--appimage-extract) extract_only=1 ;;
+	*)
+		# shellcheck disable=SC2086
+		filtered="$filtered \"$arg\""
+		;;
+	esac
+done
+
+if [ "$extract_only" -eq 1 ]; then
+	# Caller expects ./squashfs-root in CWD (AppImage runtime convention).
+	rm -rf squashfs-root
+	cp -a "$work/root" squashfs-root
+	exit 0
+fi
+
+# Prefer qemu for extracted AppRun if direct still fails (static-pie AppRun).
+set +e
+# shellcheck disable=SC2086
+eval "\"$work/root/AppRun\" $filtered"
+ec=$?
+set -e
+if [ "$ec" -eq 0 ]; then
+	exit 0
+fi
+if [ "$ec" -eq 126 ] && command -v "$qemu" >/dev/null 2>&1; then
+	# shellcheck disable=SC2086
+	eval "exec \"$qemu\" \"$work/root/AppRun\" $filtered"
+fi
+exit "$ec"
