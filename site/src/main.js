@@ -34,7 +34,7 @@ document.querySelector("#app").innerHTML = `
       <h1 id="hero-title">Read comics, media, and documents without the cloud.</h1>
       <p class="site-hero__lead mp-text--secondary">
         Komika is a cross-platform reader for archives, folders, video, audio, PDF, and Markdown —
-        with BandiView-style view modes, high-quality upscaling, and playback that recovers when the
+        with comic-focused view modes, high-quality upscaling, and playback that recovers when the
         host WebView cannot decode a clip.
       </p>
       <div class="mp-badge-row site-hero__badges">

@@ -12,7 +12,7 @@ Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives, image/video/audi
 - Pages up to **32 MiB** use in-memory RPC; larger media uses same-origin streaming. Archive members are temporarily extracted for seeking with both **2 GiB** per-entry and active-comic aggregate temp-cache limits. Deleting or moving an opened source makes its stream unavailable.
 - **PDF**: each page is a reader page (pdf.js canvas); unreadable PDFs inside multi-entry sources are skipped
 - **Markdown**: rendered with Merak (`merak-protocol-design-system/markdown`) as a scrollable article page
-- View modes inspired by BandiView-style reading:
+- View modes:
   - Fit window / fit width / fit height / original 100%
   - Double page **LTR** / **RTL**
   - Continuous **webtoon** strip
