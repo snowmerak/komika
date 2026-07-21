@@ -74,6 +74,32 @@ tasks:
           GOOS: '{{.GOOS}}'
           ARCH: '{{.ARCH}}'
 
+  package:docker:all:
+    summary: Builds packaging images and packages linux/windows for amd64+arm64
+    cmds:
+      - task: package:docker:setup
+        vars:
+          ARCH: amd64
+      - task: package:docker:setup
+        vars:
+          ARCH: arm64
+      - task: package:docker
+        vars:
+          GOOS: linux
+          ARCH: amd64
+      - task: package:docker
+        vars:
+          GOOS: linux
+          ARCH: arm64
+      - task: package:docker
+        vars:
+          GOOS: windows
+          ARCH: amd64
+      - task: package:docker
+        vars:
+          GOOS: windows
+          ARCH: arm64
+
   build:server:
     summary: Builds the application in server mode (no GUI, HTTP server only)
     cmds:
