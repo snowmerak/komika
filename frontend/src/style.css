@@ -587,12 +587,12 @@ body {
 }
 
 .reader__markdown-body {
-  line-height: 1.55;
-}
-.reader__markdown-body .mp-command-result__value {
-  display: block;
+  /* Package wraps output in .mp-markdown (spacing/type). Keep host layout hooks only. */
   min-width: 0;
-  white-space: pre-wrap;
+}
+
+.reader__markdown-body .mp-command-result__value {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 

@@ -15,7 +15,7 @@
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@wailsio/runtime": "latest",
-    "merak-protocol-design-system": "^0.2.3",
+    "merak-protocol-design-system": "^0.2.4",
     "pdfjs-dist": "^6.1.200"
   },
   "devDependencies": {
