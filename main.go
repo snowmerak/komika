@@ -52,8 +52,6 @@ func main() {
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:          "Komika",
-		Width:          1024,
-		Height:         760,
 		StartState:     application.WindowStateFullscreen,
 		MinWidth:       800,
 		MinHeight:      600,
