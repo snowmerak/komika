@@ -4,13 +4,16 @@ CBZ/ZIP, CBR/RAR, CB7/7z 아카이브, 이미지/동영상/오디오: 호스트 
 
 **언어:** [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
+> **v0.3.0:** 더 빠른 아카이브 읽기, 반응성을 유지하는 ±10 페이지 프리로드, Go/Web Worker 하이브리드 고품질 스케일링을 추가했습니다. 자세한 내용은 [릴리즈 노트](docs/releases/v0.3.0.md)를 확인하세요.
+
 ## 기능
 
 ### 읽기
 - **CBZ/ZIP**, **CBR/RAR**, **CB7/7z** 아카이브, 미디어 폴더, 또는 단일 이미지/GIF/동영상/오디오/**PDF**/**Markdown** 열기
 - 자연 정렬 페이지 순서: 이미지(PNG, JPEG, WebP, GIF), 재생 가능한 동영상(WebM, MP4, MOV), 오디오(MP3, M4A, AAC, OGG, Opus, WAV), 다중 페이지 **PDF**, **Markdown**(`.md` / `.markdown`)
 - 파일/폴더 하나 드래그 앤 드롭으로 열기
-- **32 MiB** 이하 페이지는 메모리 RPC, 더 큰 미디어는 same-origin 스트리밍. 아카이브 멤버는 시크를 위해 임시 추출되며 항목당·활성 작품 합산 임시 캐시 모두 **2 GiB** 제한. 연 소스를 삭제/이동하면 스트림을 사용할 수 없음.
+- **32 MiB** 이하 페이지는 메모리 RPC, 더 큰 미디어는 same-origin 스트리밍. CBZ/ZIP은 하나의 랜덤 액세스 인덱스로 직접 읽고, RAR/7z RPC 페이지는 요청 시 한 번 추출해 작품별 **1 GiB** 읽기 캐시에서 재사용합니다. 시크용 스트림 임시 추출은 항목당·활성 작품 합산 모두 **2 GiB** 제한이며 작품을 닫으면 임시 캐시를 제거합니다. 연 소스를 삭제/이동하면 아직 캐시되지 않은 콘텐츠는 사용할 수 없습니다.
+- 리더는 활성 페이지 주변 **±10 페이지**를 프리로드하고 유지합니다. 양면 모드는 완전한 스프레드를 보존하며 동영상·오디오·PDF가 아닌 스트림 페이지는 현재 보이는 항목만 유지합니다.
 - **PDF**: 각 페이지가 리더 페이지(pdf.js 캔버스); 다중 엔트리 소스 안 읽을 수 없는 PDF는 건너뜀
 - **Markdown**: Merak(`merak-protocol-design-system/markdown`)로 스크롤 가능한 아티클 페이지 렌더
 - 보기 모드:
@@ -209,6 +212,7 @@ gst-inspect-1.0 avdec_h264 >/dev/null && gst-inspect-1.0 avdec_aac >/dev/null &&
 | `main.go` | 앱 진입점 |
 | `comic_service.go` | Wails 브리지 (열기, 페이지, 라이브러리) |
 | `comic_source.go` | 아카이브/폴더/미디어/문서 페이지 소스 |
+| `archive_read_cache.go` | ZIP 직접 읽기 및 요청 기반 RAR/7z 페이지 캐시 |
 | `media_stream.go` | same-origin 미디어 스트리밍 및 임시 추출 한도 |
 | `media_transcode.go` | WebView 미지원 코덱용 ffmpeg 폴백 트랜스코드 캐시 |
 | `library_store.go` | 최근 목록, 설정, TTL, 원자적 JSON |
@@ -240,4 +244,4 @@ gst-inspect-1.0 avdec_h264 >/dev/null && gst-inspect-1.0 avdec_aac >/dev/null &&
 
 ## 라이선스
 
-이 저장소에는 아직 라이선스 파일이 없습니다. 배포 시 추가하세요.
+Komika는 [Mozilla Public License 2.0](LICENSE)에 따라 배포됩니다.

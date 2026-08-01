@@ -4,6 +4,8 @@ Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives, image/video/audi
 
 **Languages:** [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
+> **v0.3.0:** Faster archive reads, responsive ±10 page preloading, and hybrid Go/Web Worker high-quality scaling. See the [release notes](docs/releases/v0.3.0.md).
+
 ## Features
 
 - Open **CBZ/ZIP**, **CBR/RAR**, **CB7/7z** archives, media folders, or a single image/GIF/video/audio/**PDF**/**Markdown** file
@@ -243,4 +245,4 @@ Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover st
 
 ## License
 
-No license file is included in this repository yet. Add one if you distribute the app.
+Komika is licensed under the [Mozilla Public License 2.0](LICENSE).

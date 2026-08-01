@@ -4,13 +4,16 @@ CBZ/ZIP、CBR/RAR、CB7/7z アーカイブ、画像/動画/音声: ホスト Web
 
 **言語:** [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
+> **v0.3.0:** 高速なアーカイブ読み込み、応答性を保つ ±10 ページのプリロード、Go/Web Worker ハイブリッド高品質スケーリングを追加しました。詳細は[リリースノート](docs/releases/v0.3.0.md)を参照してください。
+
 ## 機能
 
 ### 閲覧
 - **CBZ/ZIP**、**CBR/RAR**、**CB7/7z** アーカイブ、メディアフォルダ、または単一の画像/GIF/動画/音声/**PDF**/**Markdown** を開く
 - 自然順のページ並び: 画像（PNG、JPEG、WebP、GIF）、再生可能な動画（WebM、MP4、MOV）、音声（MP3、M4A、AAC、OGG、Opus、WAV）、複数ページ **PDF**、**Markdown**（`.md` / `.markdown`）
 - ファイル/フォルダを 1 つドラッグ＆ドロップして開く
-- **32 MiB** 以下のページはメモリ RPC、それより大きいメディアは same-origin ストリーミング。アーカイブ内メンバーはシーク用に一時展開し、エントリ単位・開いている作品の合計一時キャッシュとも **2 GiB** 制限。開いたソースを削除/移動するとストリームは利用不可。
+- **32 MiB** 以下のページはメモリ RPC、それより大きいメディアは same-origin ストリーミング。CBZ/ZIP は単一のランダムアクセスインデックスから直接読み込み、RAR/7z の RPC ページは要求時に一度だけ展開して作品ごとの **1 GiB** 読み込みキャッシュで再利用します。シーク用ストリームの一時展開はエントリ単位・開いている作品の合計とも **2 GiB** 制限で、作品を閉じると一時キャッシュを削除します。開いたソースを削除/移動すると未キャッシュのコンテンツは利用できません。
+- リーダーはアクティブページの前後 **±10 ページ**をプリロードして保持します。見開きモードでは完全なスプレッドを維持し、動画・音声・PDF 以外のストリームページは表示中の項目だけを保持します。
 - **PDF**: 各ページがリーダーページ（pdf.js キャンバス）；複数エントリソース内の読めない PDF はスキップ
 - **Markdown**: Merak（`merak-protocol-design-system/markdown`）でスクロール可能な記事ページとして描画
 - 表示モード:
@@ -210,6 +213,7 @@ gst-inspect-1.0 avdec_h264 >/dev/null && gst-inspect-1.0 avdec_aac >/dev/null &&
 | `main.go` | アプリエントリ |
 | `comic_service.go` | Wails ブリッジ（オープン、ページ、ライブラリ） |
 | `comic_source.go` | アーカイブ/フォルダ/メディア/ドキュメントのページソース |
+| `archive_read_cache.go` | ZIP の直接読み込みとオンデマンド RAR/7z ページキャッシュ |
 | `media_stream.go` | same-origin メディアストリーミングと一時展開上限 |
 | `media_transcode.go` | WebView 非対応コーデック向け ffmpeg フォールバック変換キャッシュ |
 | `library_store.go` | 最近リスト、設定、TTL、原子的 JSON |
@@ -241,4 +245,4 @@ gst-inspect-1.0 avdec_h264 >/dev/null && gst-inspect-1.0 avdec_aac >/dev/null &&
 
 ## ライセンス
 
-このリポジトリにはまだライセンスファイルがありません。配布する場合は追加してください。
+Komika は [Mozilla Public License 2.0](LICENSE) の下で配布されます。
