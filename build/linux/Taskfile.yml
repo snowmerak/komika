@@ -122,13 +122,23 @@ tasks:
     cmds:
       - cp "{{.APP_BINARY}}" "{{.APP_NAME}}"
       - cp ../../appicon.png "{{.APP_NAME}}.png"
+      # appimagetool rejects CRLF desktop entries. Use an ignored, normalized
+      # packaging copy so Windows checkouts do not mutate the tracked source.
+      - sed 's/\r$//' "../{{.APP_NAME}}.desktop" > "{{.DESKTOP_FILE}}"
       - wails3 generate appimage -binary "{{.APP_NAME}}" -icon {{.ICON}} -desktopfile {{.DESKTOP_FILE}} -outputdir {{.OUTPUT_DIR}} -builddir {{.ROOT_DIR}}/build/linux/appimage/build
-      - "{{.ROOT_DIR}}/build/linux/appimage/inject-gst-plugins.sh {{.ROOT_DIR}}/bin/{{.APP_NAME}}-{{.AI_ARCH}}.AppImage"
+      # Bind-mounted Windows worktrees can retain CRLF even with eol=lf in
+      # .gitattributes. Run an LF-normalized temporary copy from the same
+      # directory so the script's relative ROOT_DIR calculation stays valid.
+      - |
+        inject_script="$(mktemp "{{.ROOT_DIR}}/build/linux/appimage/.inject-gst-plugins.XXXXXX")"
+        trap 'rm -f "$inject_script"' EXIT
+        sed 's/\r$//' "{{.ROOT_DIR}}/build/linux/appimage/inject-gst-plugins.sh" > "$inject_script"
+        bash "$inject_script" "{{.ROOT_DIR}}/bin/{{.APP_NAME}}-{{.AI_ARCH}}.AppImage"
     vars:
       APP_NAME: '{{.APP_NAME}}'
       APP_BINARY: '../../../bin/{{.APP_NAME}}'
       ICON: '{{.APP_NAME}}.png'
-      DESKTOP_FILE: '../{{.APP_NAME}}.desktop'
+      DESKTOP_FILE: '../../../bin/{{.APP_NAME}}.desktop'
       OUTPUT_DIR: '../../../bin'
       AI_ARCH:
         sh: 'uname -m | sed "s/amd64/x86_64/;s/arm64/aarch64/"'
