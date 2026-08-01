@@ -142,6 +142,10 @@ type archiveSource struct {
 	entries []pageEntry
 	// names maps page index -> fs path within the archive.
 	names []string
+	// directOpen avoids rebuilding a random-access archive index for every page.
+	directOpen map[string]func() (io.ReadCloser, error)
+	// readCache materializes sequential/solid archive entries in one background pass.
+	readCache *archiveReadCache
 }
 
 type folderSource struct {
@@ -279,13 +283,15 @@ func openArchiveSource(path string) (*archiveSource, error) {
 		names[i] = c.name
 	}
 
-	return &archiveSource{
+	src := &archiveSource{
 		path:    path,
 		title:   titleFromPath(path),
 		fsys:    fsys,
 		entries: entries,
 		names:   names,
-	}, nil
+	}
+	src.enableReadAcceleration()
+	return src, nil
 }
 
 func openFolderSource(path string) (*folderSource, error) {
@@ -474,6 +480,34 @@ func (s *archiveSource) StreamPage(index int) (pageStream, error) {
 	}
 	e := s.entries[index]
 	name := s.names[index]
+	if open := s.directOpen[name]; open != nil {
+		return pageStream{
+			mime:      e.mime,
+			sizeBytes: e.sizeBytes,
+			open:      open,
+		}, nil
+	}
+	if s.readCache != nil {
+		cachedPath, err := s.readCache.waitPath(name)
+		if err != nil {
+			return pageStream{}, err
+		}
+		if cachedPath != "" {
+			var modTime time.Time
+			if info, statErr := os.Stat(cachedPath); statErr == nil {
+				modTime = info.ModTime()
+			}
+			return pageStream{
+				mime:      e.mime,
+				sizeBytes: e.sizeBytes,
+				modTime:   modTime,
+				path:      cachedPath,
+				open: func() (io.ReadCloser, error) {
+					return os.Open(cachedPath)
+				},
+			}, nil
+		}
+	}
 	return pageStream{
 		mime:      e.mime,
 		sizeBytes: e.sizeBytes,
@@ -501,6 +535,11 @@ func (s *archiveSource) ReadPage(index int) (string, []byte, error) {
 }
 
 func (s *archiveSource) Close() error {
+	if s.readCache != nil {
+		s.readCache.Close()
+		s.readCache = nil
+	}
+	s.directOpen = nil
 	// archives.ArchiveFS is path-backed and has no Close method.
 	s.fsys = nil
 	return nil

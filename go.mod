@@ -3,13 +3,13 @@ module komika
 go 1.25.0
 
 require (
+	github.com/STARRY-S/zip v0.2.3
 	github.com/mholt/archives v0.1.5
 	github.com/pdfcpu/pdfcpu v0.13.0
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.117
 )
 
 require (
-	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect

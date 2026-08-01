@@ -197,13 +197,15 @@ export function spreadForPage(
   return mode === "doubleRTL" ? [pair[1], pair[0]] : pair;
 }
 
+export const PAGE_PRELOAD_RADIUS = 10;
+
 export function cacheIndices(index: number, pageCount: number, mode: ViewMode): Set<number> {
   const out = new Set<number>();
   if (pageCount <= 0) return out;
   const clamped = Math.max(0, Math.min(pageCount - 1, index));
 
   if (mode === "webtoon") {
-    for (let i = clamped - 2; i <= clamped + 2; i++) {
+    for (let i = clamped - PAGE_PRELOAD_RADIUS; i <= clamped + PAGE_PRELOAD_RADIUS; i++) {
       if (i >= 0 && i < pageCount) out.add(i);
     }
     return out;
@@ -211,8 +213,11 @@ export function cacheIndices(index: number, pageCount: number, mode: ViewMode): 
 
   if (mode === "doubleLTR" || mode === "doubleRTL") {
     const lower = Math.floor(clamped / 2) * 2;
-    const spreads = [lower - 2, lower, lower + 2];
-    for (const start of spreads) {
+    for (
+      let start = lower - PAGE_PRELOAD_RADIUS;
+      start <= lower + PAGE_PRELOAD_RADIUS;
+      start += 2
+    ) {
       if (start < 0 || start >= pageCount) continue;
       out.add(start);
       if (start + 1 < pageCount) out.add(start + 1);
@@ -220,7 +225,7 @@ export function cacheIndices(index: number, pageCount: number, mode: ViewMode): 
     return out;
   }
 
-  for (const i of [clamped - 1, clamped, clamped + 1]) {
+  for (let i = clamped - PAGE_PRELOAD_RADIUS; i <= clamped + PAGE_PRELOAD_RADIUS; i++) {
     if (i >= 0 && i < pageCount) out.add(i);
   }
   return out;

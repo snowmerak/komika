@@ -198,20 +198,26 @@ try {
 
   // --- cache boundaries ---
   assert.deepEqual([...cacheIndices(0, 0, "fitWindow")].sort((a, b) => a - b), []);
-  assert.deepEqual([...cacheIndices(2, 5, "fitWindow")].sort((a, b) => a - b), [1, 2, 3]);
-  assert.deepEqual([...cacheIndices(0, 5, "fitWidth")].sort((a, b) => a - b), [0, 1]);
-  assert.deepEqual([...cacheIndices(4, 5, "original")].sort((a, b) => a - b), [3, 4]);
-  // webtoon active±2
-  assert.deepEqual([...cacheIndices(2, 10, "webtoon")].sort((a, b) => a - b), [0, 1, 2, 3, 4]);
-  assert.deepEqual([...cacheIndices(0, 3, "webtoon")].sort((a, b) => a - b), [0, 1, 2]);
-  // double: current + prev/next spreads (lower 2 => spreads 0,2,4)
   assert.deepEqual(
-    [...cacheIndices(2, 5, "doubleLTR")].sort((a, b) => a - b),
-    [0, 1, 2, 3, 4]
+    [...cacheIndices(15, 30, "fitWindow")].sort((a, b) => a - b),
+    Array.from({ length: 21 }, (_, i) => i + 5)
+  );
+  assert.deepEqual([...cacheIndices(0, 5, "fitWidth")].sort((a, b) => a - b), [0, 1, 2, 3, 4]);
+  assert.deepEqual([...cacheIndices(4, 5, "original")].sort((a, b) => a - b), [0, 1, 2, 3, 4]);
+  // webtoon active±10
+  assert.deepEqual(
+    [...cacheIndices(15, 30, "webtoon")].sort((a, b) => a - b),
+    Array.from({ length: 21 }, (_, i) => i + 5)
+  );
+  assert.deepEqual([...cacheIndices(0, 3, "webtoon")].sort((a, b) => a - b), [0, 1, 2]);
+  // double: complete spreads intersecting current page ±10
+  assert.deepEqual(
+    [...cacheIndices(10, 30, "doubleLTR")].sort((a, b) => a - b),
+    Array.from({ length: 22 }, (_, i) => i)
   );
   assert.deepEqual(
-    [...cacheIndices(0, 5, "doubleRTL")].sort((a, b) => a - b),
-    [0, 1, 2, 3]
+    [...cacheIndices(0, 30, "doubleRTL")].sort((a, b) => a - b),
+    Array.from({ length: 12 }, (_, i) => i)
   );
 
   // --- page load ordering ---
@@ -728,14 +734,14 @@ try {
 
   // --- shouldRetainCachedMedia / shouldKeepWebtoonDomMedia ---
   {
-    const keep = cacheIndices(5, 20, "webtoon"); // 3..7
+    const keep = cacheIndices(5, 20, "webtoon"); // 0..15
     const visible = new Set([5]);
     // PDF neighbors stay in the cache window even when only active is "visible".
     assert.equal(shouldRetainCachedMedia("pdf", "rpc", 4, keep, visible), true);
     assert.equal(shouldRetainCachedMedia("pdf", "rpc", 5, keep, visible), true);
     assert.equal(shouldRetainCachedMedia("pdf", "rpc", 6, keep, visible), true);
     assert.equal(shouldRetainCachedMedia("pdf", "stream", 4, keep, visible), true);
-    assert.equal(shouldRetainCachedMedia("pdf", "rpc", 2, keep, visible), false);
+    assert.equal(shouldRetainCachedMedia("pdf", "rpc", 16, keep, visible), false);
     // video/audio still visible-only
     assert.equal(shouldRetainCachedMedia("video", "rpc", 4, keep, visible), false);
     assert.equal(shouldRetainCachedMedia("audio", "stream", 5, keep, visible), true);
@@ -753,17 +759,23 @@ try {
 
   // --- webtoon PDF load→trim→DOM lifecycle at N / N+1 boundary ---
   {
-    const pageCount = 12;
+    const pageCount = 30;
     // setActive(N): loadPages(cacheIndices(N), visible={N})
-    const activeN = 5;
+    const activeN = 15;
     const visibleN = new Set([activeN]);
     const windowN = [...cacheIndices(activeN, pageCount, "webtoon")];
     const loadN = windowN.filter((i) => shouldLoadMediaDelivery("rpc", "pdf", i, visibleN));
-    assert.deepEqual(loadN.sort((a, b) => a - b), [3, 4, 5, 6, 7]);
+    assert.deepEqual(
+      loadN.sort((a, b) => a - b),
+      Array.from({ length: 21 }, (_, i) => i + 5)
+    );
 
     // nearObserver also passes empty visible — PDF must still prefetch.
     const nearLoad = windowN.filter((i) => shouldLoadMediaDelivery("stream", "pdf", i, new Set()));
-    assert.deepEqual(nearLoad.sort((a, b) => a - b), [3, 4, 5, 6, 7]);
+    assert.deepEqual(
+      nearLoad.sort((a, b) => a - b),
+      Array.from({ length: 21 }, (_, i) => i + 5)
+    );
 
     // Simulate pageCache after loads, then trimCache(active=N, visible={N}).
     const cache = new Map(
@@ -776,10 +788,13 @@ try {
         cache.delete(key);
       }
     }
-    assert.deepEqual([...cache.keys()].sort((a, b) => a - b), [3, 4, 5, 6, 7]);
+    assert.deepEqual(
+      [...cache.keys()].sort((a, b) => a - b),
+      Array.from({ length: 21 }, (_, i) => i + 5)
+    );
 
     // fillCached DOM keep: N-1, N, N+1 PDF canvases all stay mounted.
-    for (const i of [4, 5, 6]) {
+    for (const i of [14, 15, 16]) {
       assert.equal(
         shouldKeepWebtoonDomMedia("pdf", i, activeN, keepN, cache.has(i)),
         true,
@@ -788,13 +803,16 @@ try {
     }
 
     // Scroll boundary → active becomes N+1; previous page must still retain.
-    const activeNext = 6;
+    const activeNext = 16;
     const visibleNext = new Set([activeNext]);
     const windowNext = [...cacheIndices(activeNext, pageCount, "webtoon")];
     const loadNext = windowNext.filter((i) =>
       shouldLoadMediaDelivery("rpc", "pdf", i, visibleNext)
     );
-    assert.deepEqual(loadNext.sort((a, b) => a - b), [4, 5, 6, 7, 8]);
+    assert.deepEqual(
+      loadNext.sort((a, b) => a - b),
+      Array.from({ length: 21 }, (_, i) => i + 6)
+    );
     for (const i of loadNext) {
       if (!cache.has(i)) cache.set(i, { kind: "pdf", delivery: "rpc" });
     }
@@ -805,11 +823,14 @@ try {
         cache.delete(key);
       }
     }
-    // page 3 drops out of window; 4..8 remain — N and N+1 both alive across the boundary.
-    assert.deepEqual([...cache.keys()].sort((a, b) => a - b), [4, 5, 6, 7, 8]);
-    assert.equal(shouldKeepWebtoonDomMedia("pdf", 5, activeNext, keepNext, true), true);
-    assert.equal(shouldKeepWebtoonDomMedia("pdf", 6, activeNext, keepNext, true), true);
-    assert.equal(shouldKeepWebtoonDomMedia("pdf", 3, activeNext, keepNext, false), false);
+    // Page 5 drops out; 6..26 remain across the N -> N+1 boundary.
+    assert.deepEqual(
+      [...cache.keys()].sort((a, b) => a - b),
+      Array.from({ length: 21 }, (_, i) => i + 6)
+    );
+    assert.equal(shouldKeepWebtoonDomMedia("pdf", 15, activeNext, keepNext, true), true);
+    assert.equal(shouldKeepWebtoonDomMedia("pdf", 16, activeNext, keepNext, true), true);
+    assert.equal(shouldKeepWebtoonDomMedia("pdf", 5, activeNext, keepNext, false), false);
   }
 
   // --- releaseHtmlMediaElement ---

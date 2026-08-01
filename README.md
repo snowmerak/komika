@@ -9,7 +9,8 @@ Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives, image/video/audi
 - Open **CBZ/ZIP**, **CBR/RAR**, **CB7/7z** archives, media folders, or a single image/GIF/video/audio/**PDF**/**Markdown** file
 - Natural page order for images (PNG, JPEG, WebP, GIF), playable video (WebM, MP4, MOV), audio (MP3, M4A, AAC, OGG, Opus, WAV), multi-page **PDF**, and **Markdown** (`.md` / `.markdown`)
 - Drag-and-drop one file or folder onto the window to open
-- Pages up to **32 MiB** use in-memory RPC; larger media uses same-origin streaming. Archive members are temporarily extracted for seeking with both **2 GiB** per-entry and active-comic aggregate temp-cache limits. Deleting or moving an opened source makes its stream unavailable.
+- Pages up to **32 MiB** use in-memory RPC; larger media uses same-origin streaming. CBZ/ZIP pages reuse one random-access index, while RAR/7z RPC pages are demand-extracted once into a per-open **1 GiB** disk read cache and reused. Archive members streamed for seeking retain both **2 GiB** per-entry and active-comic aggregate temp-cache limits. Temporary caches are removed when the work is closed. Deleting or moving an opened source makes uncached content unavailable.
+- The reader preloads and retains a **±10 page** window around the active page (complete spreads in double-page modes); video, audio, and non-PDF stream pages remain visible-only.
 - **PDF**: each page is a reader page (pdf.js canvas); unreadable PDFs inside multi-entry sources are skipped
 - **Markdown**: rendered with Merak (`merak-protocol-design-system/markdown`) as a scrollable article page
 - View modes:
@@ -210,6 +211,7 @@ Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover st
 | `main.go` | App entry |
 | `comic_service.go` | Wails bridge (open, pages, library) |
 | `comic_source.go` | Archive/folder/media/document page sources |
+| `archive_read_cache.go` | ZIP direct reads and demand-driven RAR/7z page cache |
 | `media_stream.go` | Same-origin media streaming and temp extraction limits |
 | `media_transcode.go` | ffmpeg fallback transcode cache for unsupported WebView codecs |
 | `library_store.go` | Recent list, settings, TTL, atomic JSON |
