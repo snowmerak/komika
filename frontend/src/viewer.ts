@@ -249,6 +249,21 @@ export function orderPageLoadIndices(
   });
 }
 
+/**
+ * Keep background preloading from occupying every load slot. Visible work may
+ * use any free slot, while background work runs only when no other load is active.
+ */
+export function nextPageLoadQueueIndex(
+  queue: ReadonlyArray<{ priority: "visible" | "background" }>,
+  runningCount: number,
+  maxConcurrent: number
+): number {
+  if (queue.length === 0 || runningCount >= maxConcurrent) return -1;
+  const visible = queue.findIndex((job) => job.priority === "visible");
+  if (visible >= 0) return visible;
+  return runningCount === 0 ? 0 : -1;
+}
+
 export type MediaKind = "image" | "video" | "audio" | "pdf" | "markdown";
 
 export function mediaKindForMime(mime: string): MediaKind | null {
@@ -306,6 +321,17 @@ export function accumulateVideoProgress(
 }
 
 export type VideoFallbackStage = "none" | "remux" | "reencode" | "done";
+
+/** Whether a page is close enough to the active page for expensive HQ work. */
+export function isPageWithinRadius(
+  pageIndex: number,
+  activeIndex: number,
+  radius: number
+): boolean {
+  if (!Number.isInteger(pageIndex) || !Number.isInteger(activeIndex)) return false;
+  if (!Number.isFinite(radius) || radius < 0) return false;
+  return Math.abs(pageIndex - activeIndex) <= Math.floor(radius);
+}
 
 /** Pure details open toggle used by diagnostics summary click handler. */
 export function toggleDetailsOpen(currentlyOpen: boolean): boolean {

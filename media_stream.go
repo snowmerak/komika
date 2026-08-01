@@ -99,6 +99,7 @@ func (s *ComicService) retireActiveLocked() {
 	}
 	s.invalidateStreamsLocked()
 	s.invalidateTranscodeCacheLocked()
+	s.invalidateUpscaleCacheLocked()
 	old := s.active
 	old.retired = true
 	s.active = nil

@@ -126,3 +126,22 @@ export interface RecentComic {
      */
     "lastOpened": string;
 }
+
+/**
+ * UpscaleRequest describes one viewport tile. Source coordinates are natural
+ * image pixels; destination dimensions are device pixels.
+ */
+export interface UpscaleRequest {
+    "pageIndex": number;
+
+    /**
+     * highQuality
+     */
+    "rendering": string;
+    "sourceX": number;
+    "sourceY": number;
+    "sourceWidth": number;
+    "sourceHeight": number;
+    "destWidth": number;
+    "destHeight": number;
+}

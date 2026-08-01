@@ -96,9 +96,11 @@ try {
     saveViewPreferences,
     clampZoom,
     computeBaseScale,
+    isPageWithinRadius,
     clampPan,
     spreadForPage,
     cacheIndices,
+    nextPageLoadQueueIndex,
     orderPageLoadIndices,
     mediaKindForMime,
   isMeaningfulVideoProgress,
@@ -122,6 +124,11 @@ try {
     releaseHtmlMediaElement,
     VIEW_PREFERENCES_KEY,
   } = mod;
+
+  assert.equal(isPageWithinRadius(8, 10, 2), true);
+  assert.equal(isPageWithinRadius(12, 10, 2), true);
+  assert.equal(isPageWithinRadius(13, 10, 2), false);
+  assert.equal(isPageWithinRadius(10, 10, -1), false);
 
   const {
     shouldUpscaleHQ,
@@ -228,6 +235,19 @@ try {
   );
   assert.deepEqual(orderPageLoadIndices([], 2, new Set()), []);
   assert.deepEqual(orderPageLoadIndices([2, 1, 2, 3, 1], 2, new Set([2])), [2, 1, 3]);
+
+  // Background preload leaves a slot available for newly visible work.
+  assert.equal(nextPageLoadQueueIndex([{ priority: "background" }], 0, 2), 0);
+  assert.equal(nextPageLoadQueueIndex([{ priority: "background" }], 1, 2), -1);
+  assert.equal(
+    nextPageLoadQueueIndex(
+      [{ priority: "background" }, { priority: "visible" }],
+      1,
+      2
+    ),
+    1
+  );
+  assert.equal(nextPageLoadQueueIndex([{ priority: "visible" }], 2, 2), -1);
 
   // --- Storage cases ---
   function makeStorage(initial = {}) {

@@ -18,7 +18,7 @@ Local-first comic reader for CBZ/ZIP, CBR/RAR, CB7/7z archives, image/video/audi
   - Double page **LTR** / **RTL**
   - Continuous **webtoon** strip
 - Stretch small images (fit modes only)
-- Image scaling: **Smooth** (default), **High quality** (Lanczos-3), **NoHalo**, or **xBRZ** on the settled viewport tile after zoom/pan; **Pixelated** for stills; GIFs ignore canvas filters and stay animated.
+- Image scaling: **Smooth** (default), **High quality**, **NoHalo**, or **xBRZ**. Smooth pages render immediately in the ±10 read window; expensive settled viewport tiles are limited to the active ±2 pages. High quality uses a bounded parallel Go worker path; NoHalo, xBRZ, and host fallback run in a Web Worker, keeping pixel work off the UI thread. **Pixelated** remains available for stills; GIFs stay animated and bypass canvas filters.
 - Manual zoom (25–800%, webtoon up to 200%) and pan (wheel / Alt+drag when content overflows)
 - Double-click the reader title/toolbar chrome to maximize or restore the window
 - Collapse the reader toolbar (floating toggle or `T`); remembered in `localStorage`
@@ -218,7 +218,9 @@ Fixtures under `testdata/reader-fixture/` and `testdata/media-fixture/` cover st
 | `frontend/src/main.ts` | Library UI + mode-aware reader |
 | `frontend/src/viewer.ts` | Pure view math (scale, pan, spreads, cache, media kinds) |
 | `frontend/src/pdf_render.ts` | pdf.js document cache and per-page canvas attach |
-| `frontend/src/upscale.ts` | Viewport-tile pure filters: Lanczos-3, NoHalo, xBRZ |
+| `image_upscale.go` | Bounded Go worker path plus a five-page decoded-image LRU for high-quality viewport tiles served through loopback media streams |
+| `frontend/src/upscale.ts` | Pure viewport-tile filters used by the Web Worker fallback and xBRZ |
+| `frontend/src/upscale_worker.ts` | Off-main-thread xBRZ and host-fallback image scaling |
 | `frontend/src/style.css` | Reader/library styles (Merak tokens) |
 | `frontend/bindings/` | Generated Wails TypeScript bindings |
 | `testdata/` | Reader fixtures |

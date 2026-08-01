@@ -14,5 +14,6 @@ export type {
     PageDescriptor,
     PagePayload,
     PageStream,
-    RecentComic
+    RecentComic,
+    UpscaleRequest
 } from "./models.js";

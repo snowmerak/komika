@@ -18,7 +18,7 @@ CBZ/ZIP、CBR/RAR、CB7/7z アーカイブ、画像/動画/音声: ホスト Web
   - 見開き **LTR** / **RTL**
   - 連続 **ウェブトゥーン** ストリップ
 - 小さい画像の引き伸ばし（フィット系モードのみ）
-- 画像スケーリング: **Smooth**（既定）、**高品質**（Lanczos-3）、**NoHalo**、**xBRZ**（ズーム/パン安定後の表示タイル）；**Pixelated**（静止画）；GIF はキャンバスフィルタを無視してアニメーションを維持。
+- 画像スケーリング: **Smooth**（既定）、**高品質**、**NoHalo**、**xBRZ**。±10 の読み込み範囲は Smooth ですぐ表示し、高コストなタイル処理はアクティブページの ±2 に制限します。高品質は並列数を制限した Go ワーカーと 5 ページのデコード LRU を使用し、NoHalo・xBRZ・ホスト失敗時のフォールバックは Web Worker で処理します。静止画には **Pixelated** も使用でき、GIF はキャンバスフィルタを回避してアニメーションを維持します。
 - 手動ズーム（25–800%、ウェブトゥーンは最大 200%）とパン（ホイール / はみ出し時 Alt+ドラッグ）
 - リーダーのタイトル/ツールバー余白をダブルクリックしてウィンドウ最大化/復元
 - リーダーツールバーを折りたたむ（フローティングトグルまたは `T`）；`localStorage` に記憶
@@ -216,7 +216,9 @@ gst-inspect-1.0 avdec_h264 >/dev/null && gst-inspect-1.0 avdec_aac >/dev/null &&
 | `frontend/src/main.ts` | ライブラリ UI + モード別リーダー |
 | `frontend/src/viewer.ts` | 純ビュー演算（スケール、パン、見開き、キャッシュ、メディア種別） |
 | `frontend/src/pdf_render.ts` | pdf.js ドキュメントキャッシュとページキャンバス接続 |
-| `frontend/src/upscale.ts` | ビューポートタイル純フィルタ: Lanczos-3、NoHalo、xBRZ |
+| `image_upscale.go` | 高品質タイル向けの制限付き並列 Go ワーカーと 5 ページのデコード LRU |
+| `frontend/src/upscale.ts` | Web Worker フォールバックと xBRZ 用の純タイルフィルタ |
+| `frontend/src/upscale_worker.ts` | UI スレッド外で動く NoHalo・xBRZ・フォールバックスケーリング |
 | `frontend/src/style.css` | リーダー/ライブラリ用スタイル（Merak トークン） |
 | `frontend/bindings/` | 生成された Wails TypeScript バインディング |
 | `testdata/` | リーダー用フィクスチャ |

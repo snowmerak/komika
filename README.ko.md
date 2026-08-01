@@ -18,7 +18,7 @@ CBZ/ZIP, CBR/RAR, CB7/7z 아카이브, 이미지/동영상/오디오: 호스트 
   - 양면 **LTR** / **RTL**
   - 연속 **웹툰** 스트립
 - 작은 이미지 늘리기 (맞춤 모드 전용)
-- 이미지 스케일링: **Smooth**(기본), **고품질**(Lanczos-3), **NoHalo**, **xBRZ**(줌/팬 안정 후 보이는 타일); **Pixelated**(정지 이미지); GIF는 캔버스 필터를 무시하고 애니메이션 유지.
+- 이미지 스케일링: **Smooth**(기본), **고품질**, **NoHalo**, **xBRZ**. ±10 읽기 창은 Smooth로 즉시 표시하고, 고비용 타일은 활성 페이지 ±2로 제한합니다. 고품질은 병렬 수가 제한된 Go 워커와 5페이지 디코드 LRU를 사용하며, NoHalo·xBRZ·호스트 실패 폴백은 Web Worker에서 처리합니다. **Pixelated**는 정지 이미지에 사용할 수 있고 GIF 애니메이션은 캔버스 필터를 우회합니다.
 - 수동 확대 (25–800%, 웹툰은 최대 200%) 및 패닝 (휠 / 넘치는 경우 Alt+드래그)
 - 리더 제목/툴바 빈 영역 더블클릭으로 창 최대화/복원
 - 리더 툴바 접기 (플로팅 토글 또는 `T`); `localStorage`에 기억
@@ -215,7 +215,9 @@ gst-inspect-1.0 avdec_h264 >/dev/null && gst-inspect-1.0 avdec_aac >/dev/null &&
 | `frontend/src/main.ts` | 라이브러리 UI + 모드별 리더 |
 | `frontend/src/viewer.ts` | 순수 뷰 연산 (스케일, 팬, 스프레드, 캐시, 미디어 종류) |
 | `frontend/src/pdf_render.ts` | pdf.js 문서 캐시 및 페이지 캔버스 부착 |
-| `frontend/src/upscale.ts` | 뷰포트 타일 pure 필터: Lanczos-3, NoHalo, xBRZ |
+| `image_upscale.go` | 고품질 타일용 제한 병렬 Go 워커와 5페이지 디코드 LRU |
+| `frontend/src/upscale.ts` | Web Worker 폴백 및 xBRZ용 pure 타일 필터 |
+| `frontend/src/upscale_worker.ts` | UI 스레드 밖에서 수행하는 NoHalo·xBRZ·폴백 스케일링 |
 | `frontend/src/style.css` | 리더/라이브러리 스타일 (Merak 토큰) |
 | `frontend/bindings/` | 생성된 Wails TypeScript 바인딩 |
 | `testdata/` | 리더 픽스처 |

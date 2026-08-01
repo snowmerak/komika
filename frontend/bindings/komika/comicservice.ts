@@ -75,6 +75,14 @@ export function GetTranscodedStream(index: number): $CancellablePromise<$models.
 }
 
 /**
+ * GetUpscaledStream renders a high-quality still-image viewport tile on the
+ * bounded Go worker pool and returns it through the existing loopback HTTP path.
+ */
+export function GetUpscaledStream(req: $models.UpscaleRequest): $CancellablePromise<$models.PageStream | null> {
+    return $Call.ByID(2271918455, req);
+}
+
+/**
  * InstallDesktopIntegration registers user-level .desktop + comic MIME entries on Linux.
  */
 export function InstallDesktopIntegration(): $CancellablePromise<$models.DesktopIntegrationStatus> {

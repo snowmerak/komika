@@ -7,6 +7,7 @@ require (
 	github.com/mholt/archives v0.1.5
 	github.com/pdfcpu/pdfcpu v0.13.0
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.117
+	golang.org/x/image v0.41.0
 )
 
 require (
@@ -40,7 +41,6 @@ require (
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/image v0.41.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

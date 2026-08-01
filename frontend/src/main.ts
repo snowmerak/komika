@@ -12,6 +12,7 @@ import {
   loadViewPreferences,
   mediaKindForMime,
   mediaPlaybackFallbackMessage,
+  nextPageLoadQueueIndex,
   orderPageLoadIndices,
   saveViewPreferences,
   releaseHtmlMediaElement,
@@ -26,6 +27,7 @@ import {
   type ViewMode,
   type ViewPreferences,
   isMeaningfulVideoProgress,
+  isPageWithinRadius,
   accumulateVideoProgress,
   decideStallWatchdog,
   shouldAutoResumeVideo,
@@ -45,10 +47,10 @@ import {
   drawImageRegion,
   HQ_OVERSCAN_CSS,
   pickXbrzFactor,
-  scaleRegionForRendering,
   shouldUpscaleHQ,
   type CanvasScaleRendering,
 } from "./upscale";
+import { renderUpscaleInWorker } from "./upscale_worker_client";
 import { attachPdfPage, clearPdfDocCache } from "./pdf_render";
 
 type ReadingDirection = "rtl" | "ltr";
@@ -124,6 +126,7 @@ interface CachedMedia {
 
 const MAX_CONCURRENT_PAGE_LOADS = 2;
 const HQ_PAINT_DEBOUNCE_MS = 120;
+const HQ_PRELOAD_RADIUS = 2;
 const pageCache = new Map<number, CachedMedia>();
 const pageLoads = new Map<number, Promise<CachedMedia | undefined>>();
 const pageLoadDeferreds = new Map<number, Deferred<CachedMedia | undefined>>();
@@ -174,6 +177,29 @@ const pageLoadQueue: PageLoadJob[] = [];
 const pageLoadRunning = new Set<number>();
 let renderGeneration = 0;
 let readerCleanup: (() => void) | null = null;
+
+function activeHQPageIndex(): number {
+  return state.viewPreferences.mode === "webtoon"
+    ? state.webtoonActiveIndex
+    : state.pageIndex;
+}
+
+function shouldUseHQForPage(media: CachedMedia, pageIndex: number): boolean {
+  if (media.kind !== "image") return false;
+  const mime = media.mime.toLowerCase();
+  if (mime === "image/gif" || mime.startsWith("image/gif")) return false;
+  const rendering = state.viewPreferences.imageRendering;
+  if (rendering !== "highQuality" && rendering !== "noHalo" && rendering !== "xbrz") {
+    return false;
+  }
+  return isPageWithinRadius(pageIndex, activeHQPageIndex(), HQ_PRELOAD_RADIUS);
+}
+
+function mediaRenderKey(media: CachedMedia, pageIndex: number): string {
+  if (media.kind !== "image") return media.url;
+  const tier = shouldUseHQForPage(media, pageIndex) ? "hq" : "smooth";
+  return `${media.url}|${state.viewPreferences.imageRendering}|${tier}`;
+}
 
 let pendingProgressIndex: number | null = null;
 let progressWrite: Promise<void> | null = null;
@@ -592,7 +618,10 @@ function attachMediaElement(
       "noHalo",
       "xbrz",
     ]);
-    const useCanvasScale = CANVAS_SCALE_RENDERINGS.has(rendering) && !isGif;
+    const useCanvasScale =
+      CANVAS_SCALE_RENDERINGS.has(rendering) &&
+      !isGif &&
+      shouldUseHQForPage(media, pageIndex);
     const scaleRendering = rendering as CanvasScaleRendering;
 
     if (!useCanvasScale) {
@@ -627,7 +656,7 @@ function attachMediaElement(
       };
     }
 
-    // Canvas scale filters: viewport tile + settled Lanczos / NoHalo / xBRZ.
+    // Paint Smooth immediately, then replace settled HQ tiles from Go or a Web Worker.
     host.classList.add("reader__media-host--hq");
 
     const canvas = document.createElement("canvas");
@@ -644,12 +673,12 @@ function attachMediaElement(
 
     let naturalW = 0;
     let naturalH = 0;
-    let srcPixels: ImageData | null = null;
     let drawSource: CanvasImageSource | null = null;
     let bitmap: ImageBitmap | null = null;
     let hqTimer: number | null = null;
     let hqRunning = false;
     let hqPending = false;
+    let hqVersion = 0;
     let disposed = false;
     let panning = false;
 
@@ -754,8 +783,47 @@ function attachMediaElement(
       }
     };
 
-    const runPaintHQ = (): void => {
-      if (disposed || !srcPixels) {
+    const loadHostUpscale = async (tile: HqTile): Promise<ImageBitmap> => {
+      const stream = await ComicService.GetUpscaledStream({
+        pageIndex,
+        rendering: scaleRendering,
+        sourceX: tile.src.x,
+        sourceY: tile.src.y,
+        sourceWidth: tile.src.w,
+        sourceHeight: tile.src.h,
+        destWidth: tile.destW,
+        destHeight: tile.destH,
+      });
+      if (!stream?.url || !stream.token) throw new Error("empty upscale stream");
+      try {
+        const response = await fetch(stream.url);
+        if (!response.ok) throw new Error(`upscale fetch failed (${response.status})`);
+        return await createImageBitmap(await response.blob());
+      } finally {
+        void ComicService.ReleasePageStream(stream.token).catch(() => {});
+      }
+    };
+
+    const loadWorkerUpscale = (tile: HqTile): Promise<ImageBitmap> =>
+      renderUpscaleInWorker({
+        url: media.url,
+        rendering: scaleRendering,
+        region: tile.src,
+        destWidth: tile.destW,
+        destHeight: tile.destH,
+      });
+
+    const loadHQBitmap = async (tile: HqTile): Promise<ImageBitmap> => {
+      if (scaleRendering !== "highQuality") return loadWorkerUpscale(tile);
+      try {
+        return await loadHostUpscale(tile);
+      } catch {
+        return loadWorkerUpscale(tile);
+      }
+    };
+
+    const runPaintHQ = async (version: number): Promise<void> => {
+      if (disposed || !drawSource) {
         hqRunning = false;
         return;
       }
@@ -801,18 +869,15 @@ function attachMediaElement(
         return;
       }
 
+      let result: ImageBitmap | null = null;
       try {
-        const imageData = scaleRegionForRendering(
-          scaleRendering,
-          srcPixels,
-          tile.src,
-          tile.destW,
-          tile.destH
-        );
-        ctx.putImageData(imageData, 0, 0);
+        result = await loadHQBitmap(tile);
+        if (disposed || version !== hqVersion) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(result, 0, 0, tile.destW, tile.destH);
         canvas.style.visibility = "visible";
       } catch {
-        if (drawSource) {
+        if (!disposed && version === hqVersion && drawSource) {
           try {
             drawImageRegion(ctx, drawSource, tile.src, tile.destW, tile.destH);
             canvas.style.visibility = "visible";
@@ -820,17 +885,20 @@ function attachMediaElement(
             // keep last frame
           }
         }
-      }
-
-      hqRunning = false;
-      if (hqPending) {
-        hqPending = false;
-        schedulePaintHQ();
+      } finally {
+        result?.close();
+        hqRunning = false;
+        if (hqPending && !disposed) {
+          hqPending = false;
+          schedulePaintHQ();
+        }
       }
     };
 
     const schedulePaintHQ = (): void => {
       if (disposed) return;
+      hqVersion += 1;
+      const version = hqVersion;
       if (hqTimer != null) {
         clearTimeout(hqTimer);
         hqTimer = null;
@@ -844,7 +912,9 @@ function attachMediaElement(
         }
         hqRunning = true;
         // Yield so cheap paints stay responsive during settle.
-        queueMicrotask(runPaintHQ);
+        queueMicrotask(() => {
+          void runPaintHQ(version);
+        });
       }, HQ_PAINT_DEBOUNCE_MS);
     };
 
@@ -923,20 +993,6 @@ function attachMediaElement(
         // keep HTMLImageElement as drawSource
       }
 
-      // Extract ImageData for Lanczos from a natural-size canvas.
-      try {
-        const off = document.createElement("canvas");
-        off.width = naturalW;
-        off.height = naturalH;
-        const octx = off.getContext("2d", { willReadFrequently: true });
-        if (octx && drawSource) {
-          octx.drawImage(drawSource, 0, 0);
-          srcPixels = octx.getImageData(0, 0, naturalW, naturalH);
-        }
-      } catch {
-        srcPixels = null;
-      }
-
       if (disposed) return;
       requestPaintCheap();
       schedulePaintHQ();
@@ -984,7 +1040,6 @@ function attachMediaElement(
           bitmap.close();
           bitmap = null;
         }
-        srcPixels = null;
         drawSource = null;
         host.classList.remove("reader__media-host--hq");
       },
@@ -2246,7 +2301,11 @@ function enqueuePageLoads(
 
 function pumpPageLoads(): void {
   while (pageLoadRunning.size < MAX_CONCURRENT_PAGE_LOADS && pageLoadQueue.length > 0) {
-    const nextJob = pageLoadQueue.findIndex((job) => !pageLoadRunning.has(job.index));
+    const nextJob = nextPageLoadQueueIndex(
+      pageLoadQueue,
+      pageLoadRunning.size,
+      MAX_CONCURRENT_PAGE_LOADS
+    );
     if (nextJob === -1) break;
     const job = pageLoadQueue.splice(nextJob, 1)[0]!;
     const deferred = pageLoadDeferreds.get(job.index);
@@ -3174,7 +3233,7 @@ function renderReader(): HTMLElement {
   renderSelect.setAttribute("aria-label", "Image scaling");
   for (const opt of [
     { value: "smooth", label: "Smooth" },
-    { value: "highQuality", label: "High quality (Lanczos)" },
+    { value: "highQuality", label: "High quality" },
     { value: "noHalo", label: "NoHalo" },
     { value: "xbrz", label: "xBRZ" },
     { value: "pixelated", label: "Pixelated" },
@@ -3817,7 +3876,7 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
       const existing = item.querySelector(".reader__media");
       if (
         existing instanceof HTMLElement &&
-        existing.dataset.mediaUrl === media.url
+        existing.dataset.renderKey === mediaRenderKey(media, i)
       ) {
         continue;
       }
@@ -3845,6 +3904,7 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
         }
       );
       attached.el.dataset.mediaUrl = media.url;
+      attached.el.dataset.renderKey = mediaRenderKey(media, i);
       itemCleanups.set(i, attached.cleanup);
     }
     for (let i = 0; i < items.length; i++) {

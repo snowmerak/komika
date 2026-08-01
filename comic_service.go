@@ -32,6 +32,13 @@ type ComicService struct {
 	maxTranscodeTempBytes int64
 	transcodeTempBytes    int64
 
+	// Bounded CPU worker pool for high-quality still-image tiles.
+	upscaleSem          chan struct{}
+	upscaleDecoded      map[upscaleCacheKey]*upscaleCacheEntry
+	upscaleInflight     map[upscaleCacheKey]*upscaleDecodeFlight
+	upscaleDecodedBytes int64
+	upscaleCacheClock   uint64
+
 	// Per-service loopback HTTP for Range media (WebKitGTK cannot use wails://).
 	mediaHTTPBase string
 	mediaHTTPSrv  *http.Server
@@ -47,6 +54,7 @@ func NewComicService() (*ComicService, error) {
 	svc := &ComicService{store: store}
 	initStreamState(svc)
 	initTranscodeState(svc)
+	initUpscaleState(svc)
 	return svc, nil
 }
 
@@ -55,6 +63,7 @@ func NewComicServiceWithStore(store *LibraryStore) *ComicService {
 	svc := &ComicService{store: store}
 	initStreamState(svc)
 	initTranscodeState(svc)
+	initUpscaleState(svc)
 	return svc
 }
 
