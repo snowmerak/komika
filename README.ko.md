@@ -79,9 +79,10 @@ wails3 task common:generate:bindings
 크로스 컴파일 / 플랫폼 패키지 예:
 
 ```bash
-wails3 task build GOOS=darwin
-wails3 task build GOOS=windows
-wails3 task build GOOS=linux
+wails3 task setup:docker ARCH=arm64
+wails3 task build GOOS=darwin ARCH=arm64
+wails3 task build GOOS=windows ARCH=arm64
+wails3 task build GOOS=linux ARCH=arm64
 wails3 task package GOOS=darwin
 ```
 
@@ -89,7 +90,8 @@ wails3 task package GOOS=darwin
 
 Linux AppImage/deb/rpm/aur 및 Windows NSIS 전체 패키징은 multi-arch `komika-package`
 이미지(`debian:trixie`) 안에서 돌릴 수 있습니다. 호스트에 맞는 툴체인이 없어도 됩니다.
-바이너리만 크로스 빌드할 때는 기존 `wails3 task setup:docker` → `wails-cross` 경로를 씁니다.
+바이너리만 크로스 빌드할 때는 아키텍처별 `wails-cross:$ARCH` 이미지를 사용합니다.
+`wails3 task setup:docker:all`로 둘 다 만들거나 `setup:docker ARCH=…`로 하나만 만들 수 있습니다.
 
 ```bash
 # 아키텍처별 패키징 이미지 빌드 (필요 시 둘 다)
@@ -104,11 +106,16 @@ wails3 task package:docker GOOS=linux ARCH=arm64   # → bin/komika-aarch64.AppI
 # Windows NSIS (pure Go + makensis; task는 여전히 komika-package:$ARCH 필요)
 wails3 task package:docker GOOS=windows ARCH=amd64  # 이미지 :amd64 필요 → installer
 wails3 task package:docker GOOS=windows ARCH=arm64  # 이미지 :arm64 필요 → installer
+
+# Linux/Windows × amd64/arm64 전체 패키징
+wails3 task package:docker:all
 ```
 
 결과물은 리포 바인드 마운트로 호스트 `bin/`에 남습니다. 호스트와 다른 arch는
 qemu/binfmt(Docker Desktop 또는 `tonistiigi/binfmt`)가 필요합니다. qemu 환경에서는
 이미지 안의 `run-appimage` / `qemu-user-static`으로 static-pie AppImage 도구를 실행합니다.
+전체 아키텍처 워크플로의 원시 실행 파일은 `komika-linux-$ARCH`와
+`komika-windows-$ARCH.exe`로 따로 보존되며 플랫폼 패키지는 기존처럼 아키텍처별 이름을 사용합니다.
 
 수동 실행 예:
 

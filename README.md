@@ -137,9 +137,10 @@ wails3 task common:generate:bindings
 Cross-compile / platform package examples:
 
 ```bash
-wails3 task build GOOS=darwin
-wails3 task build GOOS=windows
-wails3 task build GOOS=linux
+wails3 task setup:docker ARCH=arm64
+wails3 task build GOOS=darwin ARCH=arm64
+wails3 task build GOOS=windows ARCH=arm64
+wails3 task build GOOS=linux ARCH=arm64
 wails3 task package GOOS=darwin
 ```
 
@@ -147,7 +148,8 @@ wails3 task package GOOS=darwin
 
 Full Linux AppImage/deb/rpm/aur and Windows NSIS packaging can run inside multi-arch
 `komika-package` images (`debian:trixie`) so you do not need a matching host toolchain.
-Binary-only cross builds still use `wails3 task setup:docker` → `wails-cross`.
+Binary-only cross builds use architecture-specific `wails-cross:$ARCH` images. Build
+both with `wails3 task setup:docker:all`, or one with `setup:docker ARCH=…`.
 
 ```bash
 # Build the packaging image for one arch (repeat for the other if needed)
@@ -162,11 +164,16 @@ wails3 task package:docker GOOS=linux ARCH=arm64   # → bin/komika-aarch64.AppI
 # Windows NSIS (pure Go + makensis; task still requires komika-package:$ARCH)
 wails3 task package:docker GOOS=windows ARCH=amd64  # needs image :amd64 → installer
 wails3 task package:docker GOOS=windows ARCH=arm64  # needs image :arm64 → installer
+
+# Build all Linux/Windows packages for both architectures
+wails3 task package:docker:all
 ```
 
 Artifacts land on the host under `bin/` via the repo bind mount. Non-host arch needs
 qemu/binfmt (Docker Desktop or `tonistiigi/binfmt`). Under qemu, static-pie AppImage
-tools are run via `run-appimage` / `qemu-user-static` inside the image.
+tools are run via `run-appimage` / `qemu-user-static` inside the image. Raw executables
+from the all-architecture workflow are preserved as `komika-linux-$ARCH` and
+`komika-windows-$ARCH.exe`; platform packages already include their architecture.
 
 Manual equivalent:
 

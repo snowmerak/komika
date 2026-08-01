@@ -10,9 +10,6 @@ vars:
   #
   # Password is stored securely in system keychain. Run: wails3 setup signing
 
-  # Docker image for cross-compilation (used when building on non-Linux or no CC available)
-  CROSS_IMAGE: wails-cross
-
 tasks:
   build:
     summary: Builds the application for Linux
@@ -83,15 +80,22 @@ tasks:
       - sh: docker image inspect {{.CROSS_IMAGE}} > /dev/null 2>&1
         msg: |
           Docker image '{{.CROSS_IMAGE}}' not found.
-          Build it first: wails3 task setup:docker
+          Build it first: wails3 task setup:docker ARCH={{.DOCKER_ARCH}}
     cmds:
-      - docker run --rm -v "{{.ROOT_DIR}}:/app" {{.DOCKER_MOUNTS}} -e APP_NAME="{{.APP_NAME}}" {{if .EXTRA_TAGS}}-e EXTRA_TAGS="{{.EXTRA_TAGS}}"{{end}} {{if eq .OBFUSCATED "true"}}-e OBFUSCATED=true{{end}} {{if .GARBLE_ARGS}}-e GARBLE_ARGS="{{.GARBLE_ARGS}}"{{end}} "{{.CROSS_IMAGE}}" linux {{.DOCKER_ARCH}}
+      - docker run --rm --platform linux/{{.DOCKER_ARCH}} -v "{{.ROOT_DIR}}:/app" {{.DOCKER_MOUNTS}} -e APP_NAME="{{.APP_NAME}}" {{if .EXTRA_TAGS}}-e EXTRA_TAGS="{{.EXTRA_TAGS}}"{{end}} {{if eq .OBFUSCATED "true"}}-e OBFUSCATED=true{{end}} {{if .GARBLE_ARGS}}-e GARBLE_ARGS="{{.GARBLE_ARGS}}"{{end}} "{{.CROSS_IMAGE}}" linux {{.DOCKER_ARCH}}
       - cmd: docker run --rm -v "{{.ROOT_DIR}}:/app" alpine chown -R $(id -u):$(id -g) /app/bin
         platforms: [linux, darwin]
-      - mkdir -p {{.BIN_DIR}}
-      - mv "bin/{{.APP_NAME}}-linux-{{.DOCKER_ARCH}}" "{{.OUTPUT}}"
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '{{.BIN_DIR}}' | Out-Null"
+        platforms: [windows]
+      - cmd: mkdir -p {{.BIN_DIR}}
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "Move-Item -Force -LiteralPath 'bin/{{.APP_NAME}}-linux-{{.DOCKER_ARCH}}' -Destination '{{.OUTPUT}}'"
+        platforms: [windows]
+      - cmd: mv "bin/{{.APP_NAME}}-linux-{{.DOCKER_ARCH}}" "{{.OUTPUT}}"
+        platforms: [linux, darwin]
     vars:
       DOCKER_ARCH: '{{.ARCH | default "amd64"}}'
+      CROSS_IMAGE: 'wails-cross:{{.DOCKER_ARCH}}'
       DEFAULT_OUTPUT: '{{.BIN_DIR}}/{{.APP_NAME}}'
       OUTPUT: '{{ .OUTPUT | default .DEFAULT_OUTPUT }}'
       # Generate Docker volume mounts: Go module cache + go.mod replace directives
@@ -172,8 +176,14 @@ tasks:
     summary: Ensures the checked-in `.desktop` file is present for AppImage packaging
     dir: build
     cmds:
-      - mkdir -p {{.ROOT_DIR}}/build/linux/appimage
-      - test -f {{.ROOT_DIR}}/build/linux/{{.APP_NAME}}.desktop
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '{{.ROOT_DIR}}/build/linux/appimage' | Out-Null"
+        platforms: [windows]
+      - cmd: mkdir -p {{.ROOT_DIR}}/build/linux/appimage
+        platforms: [linux, darwin]
+      - cmd: powershell -NoProfile -Command "if (-not (Test-Path -LiteralPath '{{.ROOT_DIR}}/build/linux/{{.APP_NAME}}.desktop')) { exit 1 }"
+        platforms: [windows]
+      - cmd: test -f {{.ROOT_DIR}}/build/linux/{{.APP_NAME}}.desktop
+        platforms: [linux, darwin]
     vars:
       APP_NAME: '{{.APP_NAME}}'
 

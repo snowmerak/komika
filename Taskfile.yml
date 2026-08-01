@@ -50,9 +50,23 @@ tasks:
           SCRIPT: test:viewer
 
   setup:docker:
-    summary: Builds Docker image for cross-compilation (~800MB download)
+    summary: Builds an architecture-specific Docker image for cross-compilation
+    vars:
+      ARCH: '{{.ARCH | default ARCH}}'
     cmds:
       - task: common:setup:docker
+        vars:
+          ARCH: '{{.ARCH}}'
+
+  setup:docker:all:
+    summary: Builds amd64 and arm64 Docker images for binary cross-compilation
+    cmds:
+      - task: setup:docker
+        vars:
+          ARCH: amd64
+      - task: setup:docker
+        vars:
+          ARCH: arm64
 
   package:docker:setup:
     summary: Builds Debian 13 packaging image for one arch (AppImage/NSIS)

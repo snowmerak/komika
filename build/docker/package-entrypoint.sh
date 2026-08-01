@@ -63,25 +63,41 @@ export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
 echo "komika-package: wails3 task package GOOS=$GOOS ARCH=$ARCH"
 wails3 task package "GOOS=$GOOS" "ARCH=$ARCH"
 
+# The platform Taskfiles intentionally use their conventional generic names
+# while packaging. Preserve a target-qualified copy so package:docker:all does
+# not let the later architecture overwrite the earlier raw executable.
+case "$GOOS" in
+  linux)
+    cp -f "/src/bin/komika" "/src/bin/komika-linux-$ARCH"
+    ;;
+  windows)
+    cp -f "/src/bin/komika.exe" "/src/bin/komika-windows-$ARCH.exe"
+    ;;
+esac
+
 echo
 echo "Expected primary artifacts under /src/bin (host ./bin):"
 case "$GOOS-$ARCH" in
   linux-amd64)
     echo "  bin/komika"
+    echo "  bin/komika-linux-amd64"
     echo "  bin/komika-x86_64.AppImage"
     echo "  bin/komika*.deb (and rpm/aur if nfpm succeeds)"
     ;;
   linux-arm64)
     echo "  bin/komika"
+    echo "  bin/komika-linux-arm64"
     echo "  bin/komika-aarch64.AppImage"
     echo "  bin/komika*.deb (and rpm/aur if nfpm succeeds)"
     ;;
   windows-amd64)
     echo "  bin/komika.exe"
+    echo "  bin/komika-windows-amd64.exe"
     echo "  bin/komika-amd64-installer.exe"
     ;;
   windows-arm64)
     echo "  bin/komika.exe"
+    echo "  bin/komika-windows-arm64.exe"
     echo "  bin/komika-arm64-installer.exe"
     ;;
 esac

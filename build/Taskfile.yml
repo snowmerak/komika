@@ -200,7 +200,10 @@ tasks:
       - "darwin/icons.icns"
       - "windows/icon.ico"
     cmds:
-      - rm -f darwin/Assets.car
+      - cmd: powershell -NoProfile -Command "Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath 'darwin/Assets.car'"
+        platforms: [windows]
+      - cmd: rm -f darwin/Assets.car
+        platforms: [linux, darwin]
       - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico
 
   dev:frontend:
@@ -327,12 +330,22 @@ tasks:
       PORT: "{{.PORT}}"
 
   setup:docker:
-    summary: Builds Docker image for cross-compilation (~800MB download)
+    summary: Builds an architecture-specific Docker image for cross-compilation
     desc: |
-      Builds the Docker image needed for cross-compiling to any platform.
-      Run this once to enable cross-platform builds from any OS.
+      Builds wails-cross:{{.ARCH}} for binary cross-compilation.
+      A non-host architecture needs qemu/binfmt support (Docker Desktop or tonistiigi/binfmt).
+
+      Usage: wails3 task setup:docker ARCH=amd64|arm64
+    vars:
+      ARCH: '{{.ARCH | default ARCH}}'
+      IMAGE: 'wails-cross:{{.ARCH}}'
     cmds:
-      - docker build -t wails-cross -f build/docker/Dockerfile.cross build/docker/
+      - >-
+        docker build
+        --platform linux/{{.ARCH}}
+        -t {{.IMAGE}}
+        -f build/docker/Dockerfile.cross
+        build/docker/
     preconditions:
       - sh: docker info > /dev/null 2>&1
         msg: "Docker is required. Please install Docker first."
@@ -388,7 +401,10 @@ tasks:
           Docker image 'komika-package:{{.ARCH}}' not found.
           Build it first: wails3 task package:docker:setup ARCH={{.ARCH}}
     cmds:
-      - mkdir -p bin
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path 'bin' | Out-Null"
+        platforms: [windows]
+      - cmd: mkdir -p bin
+        platforms: [linux, darwin]
       - >-
         docker run --rm
         --platform linux/{{.ARCH}}
