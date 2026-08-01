@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 
@@ -32,8 +33,8 @@ var (
 
 // PageStream is the bridge-visible capability URL for oversized media.
 type PageStream struct {
-	URL   string `json:"url"`             // relative: "/media/<token>"
-	Token string `json:"token"`           // opaque capability; never a path or page index
+	URL   string `json:"url"`            // relative: "/media/<token>"
+	Token string `json:"token"`          // opaque capability; never a path or page index
 	Mime  string `json:"mime,omitempty"` // optional resolved MIME (e.g. after transcode)
 }
 
@@ -139,7 +140,6 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 	if desc.Delivery != deliveryStream && !forcesStreamDelivery(desc.Mime) {
 		return nil, errNotStreamPage
 	}
-
 	ps, err := src.StreamPage(index)
 	if err != nil {
 		return nil, err
@@ -179,7 +179,8 @@ func (s *ComicService) GetPageStream(index int) (*PageStream, error) {
 	// WebKitGTK often black-screens on non-faststart MP4 over HTTP (moov at end).
 	// Phone camera exports (Android mp42) commonly need a cheap remux first.
 	if ps.mime == "video/mp4" || ps.mime == "video/quicktime" {
-		if fast, fsErr := mp4MoovBeforeMdat(streamPath); fsErr == nil && !fast {
+		fast, fsErr := mp4MoovBeforeMdat(streamPath)
+		if fsErr == nil && !fast && shouldEagerFaststartRemux(runtime.GOOS) {
 			fixed, fixErr := s.ensureFaststartMP4(streamPath)
 			if fixErr != nil {
 				log.Printf("komika: faststart remux skipped: %v", fixErr)

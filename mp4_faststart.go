@@ -1,4 +1,3 @@
-
 package main
 
 import (
@@ -6,6 +5,14 @@ import (
 	"io"
 	"os"
 )
+
+// Only Linux desktop eagerly rewrites moov-at-end MP4/MOV files. WebKitGTK has
+// historically stalled on those files even over a Range-capable HTTP stream.
+// Chromium/WebView2 and WebKit on Apple platforms get the original stream first;
+// the existing playback watchdog can still request a fallback remux if needed.
+func shouldEagerFaststartRemux(goos string) bool {
+	return goos == "linux"
+}
 
 // mp4MoovBeforeMdat reports whether an MP4/MOV has its moov atom before mdat
 // (faststart). Files with moov at the end often stall WebKitGTK over HTTP until

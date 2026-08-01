@@ -7,6 +7,26 @@ import (
 	"testing"
 )
 
+func TestShouldEagerFaststartRemux(t *testing.T) {
+	tests := []struct {
+		goos string
+		want bool
+	}{
+		{goos: "linux", want: true},
+		{goos: "windows", want: false},
+		{goos: "darwin", want: false},
+		{goos: "android", want: false},
+		{goos: "ios", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.goos, func(t *testing.T) {
+			if got := shouldEagerFaststartRemux(tt.goos); got != tt.want {
+				t.Fatalf("shouldEagerFaststartRemux(%q)=%t want %t", tt.goos, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMp4MoovBeforeMdat(t *testing.T) {
 	// fixture webm is not mp4 - use media fixture mp4 if any
 	src := filepath.Join("testdata", "media-fixture", "8-video.mp4")
