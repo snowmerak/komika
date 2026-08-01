@@ -264,25 +264,44 @@ function errMessage(err: unknown): string {
 function showToast(message: string, variant: "error" | "info" | "success" = "error"): void {
   state.error = message;
   toastRegion.replaceChildren();
-  const alert = document.createElement("div");
-  alert.className = `mp-alert mp-alert--${variant} mp-alert--floating mp-alert--compact`;
+  const resolvedVariant = variant === "error" ? "danger" : variant;
+  toastRegion.setAttribute("aria-live", variant === "error" ? "assertive" : "polite");
+
+  const toast = document.createElement("div");
+  toast.className = `mp-toast mp-toast--${resolvedVariant}`;
+
   const icon = document.createElement("div");
-  icon.className = "mp-alert__icon";
-  icon.textContent = variant === "error" ? "!" : "i";
-  const content = document.createElement("div");
-  content.className = "mp-alert__content";
-  const title = document.createElement("div");
-  title.className = "mp-alert__title";
-  title.textContent = variant === "error" ? "Error" : "Status";
+  icon.className = "mp-toast__icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.append(statusIcon(variant));
+
   const body = document.createElement("div");
-  body.className = "mp-alert__message";
-  body.textContent = message;
-  content.append(title, body);
-  alert.append(icon, content);
-  toastRegion.append(alert);
-  window.setTimeout(() => {
-    if (toastRegion.contains(alert)) alert.remove();
-  }, 4500);
+  body.className = "mp-toast__body";
+  const title = document.createElement("strong");
+  title.className = "mp-toast__title";
+  title.textContent = variant === "error" ? "Error" : variant === "success" ? "Complete" : "Status";
+  const detail = document.createElement("p");
+  detail.className = "mp-toast__message";
+  detail.textContent = message;
+  body.append(title, detail);
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "mp-toast__close";
+  close.setAttribute("aria-label", "Dismiss notification");
+  close.append(svgIcon('<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>'));
+
+  const dismiss = (): void => {
+    if (!toastRegion.contains(toast) || toast.classList.contains("is-leaving")) return;
+    toast.classList.add("is-leaving");
+    toast.addEventListener("animationend", () => toast.remove(), { once: true });
+    window.setTimeout(() => toast.remove(), 750);
+  };
+  close.addEventListener("click", dismiss);
+
+  toast.append(icon, body, close);
+  toastRegion.append(toast);
+  window.setTimeout(dismiss, 4500);
 }
 
 function clearToast(): void {
@@ -295,13 +314,26 @@ function svgIcon(paths: string): SVGSVGElement {
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-width", "1.35");
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
-  svg.classList.add("icon");
+  svg.classList.add("mp-symbol");
   svg.innerHTML = paths;
   return svg;
+}
+
+function statusIcon(variant: "error" | "info" | "success" | "warning"): SVGSVGElement {
+  if (variant === "success") {
+    return svgIcon('<path d="M5 12.5 9.5 17 19 7.5"/>');
+  }
+  if (variant === "error") {
+    return svgIcon('<circle cx="12" cy="12" r="8.5"/><line x1="12" y1="7.5" x2="12" y2="13"/><circle cx="12" cy="16.5" r="0.7" fill="currentColor" stroke="none"/>');
+  }
+  if (variant === "warning") {
+    return svgIcon('<path d="M12 4 21 19H3Z"/><line x1="12" y1="9" x2="12" y2="13.5"/><circle cx="12" cy="16.5" r="0.7" fill="currentColor" stroke="none"/>');
+  }
+  return svgIcon('<circle cx="12" cy="12" r="8.5"/><line x1="12" y1="10.5" x2="12" y2="16"/><circle cx="12" cy="7.5" r="0.7" fill="currentColor" stroke="none"/>');
 }
 
 function makeButton(
@@ -521,14 +553,24 @@ function makeUnavailableMediaCard(
   diagnostics?: string | null
 ): HTMLElement {
   const card = document.createElement("div");
-  card.className = "reader__media reader__media--error";
-  card.setAttribute("role", "img");
+  card.className = "reader__media reader__media--error mp-alert mp-alert--error";
+  card.setAttribute("role", "alert");
   if (mediaUrl) card.dataset.mediaUrl = mediaUrl;
 
-  const msg = document.createElement("div");
-  msg.className = "reader__media-error-msg";
+  const icon = document.createElement("span");
+  icon.className = "mp-alert__icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.append(statusIcon("error"));
+
+  const content = document.createElement("div");
+  content.className = "mp-alert__content reader__media-error-content";
+  const title = document.createElement("strong");
+  title.className = "mp-alert__title";
+  title.textContent = "Media unavailable";
+  const msg = document.createElement("p");
+  msg.className = "mp-alert__message reader__media-error-msg";
   msg.textContent = message;
-  card.append(msg);
+  content.append(title, msg);
 
   const detailText = typeof diagnostics === "string" ? diagnostics.trim() : "";
   if (detailText) {
@@ -540,8 +582,9 @@ function makeUnavailableMediaCard(
     pre.className = "reader__media-diagnostics-body";
     pre.textContent = detailText;
     details.append(summary, pre);
-    card.append(details);
+    content.append(details);
   }
+  card.append(icon, content);
   return card;
 }
 
@@ -595,7 +638,16 @@ function makeLoadingMediaCard(message: string, mediaUrl?: string): HTMLElement {
   card.className = "reader__media reader__media--loading";
   card.setAttribute("role", "status");
   card.setAttribute("aria-live", "polite");
-  card.textContent = message;
+  const label = document.createElement("span");
+  label.className = "mp-spinner-label";
+  const spinner = document.createElement("span");
+  spinner.className = "mp-spinner mp-spinner--sm";
+  spinner.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  text.className = "mp-spinner-label__text";
+  text.textContent = message;
+  label.append(spinner, text);
+  card.append(label);
   if (mediaUrl) card.dataset.mediaUrl = mediaUrl;
   return card;
 }
@@ -2652,8 +2704,16 @@ function renderLibrary(): HTMLElement {
 
   if (!settings.saveRecents) {
     const notice = document.createElement("div");
-    notice.className = "history-notice";
-    notice.textContent = "Recent history is not being saved";
+    notice.className = "mp-alert mp-alert--warning mp-alert--compact history-notice";
+    notice.setAttribute("role", "status");
+    const noticeIcon = document.createElement("span");
+    noticeIcon.className = "mp-alert__icon";
+    noticeIcon.setAttribute("aria-hidden", "true");
+    noticeIcon.append(statusIcon("warning"));
+    const noticeTitle = document.createElement("strong");
+    noticeTitle.className = "mp-alert__title";
+    noticeTitle.textContent = "Recent history is not being saved";
+    notice.append(noticeIcon, noticeTitle);
     historyPanel.append(notice);
   }
 
@@ -2915,9 +2975,21 @@ async function handleRemoveDesktopIntegration(): Promise<void> {
 
 function renderHistoryConfirm(action: HistoryAction): HTMLElement {
   const box = document.createElement("div");
-  box.className = "history-confirm";
+  box.className = "mp-alert mp-alert--warning history-confirm";
+  box.setAttribute("role", "status");
+
+  const icon = document.createElement("span");
+  icon.className = "mp-alert__icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.append(statusIcon("warning"));
+
+  const content = document.createElement("div");
+  content.className = "mp-alert__content";
+  const title = document.createElement("strong");
+  title.className = "mp-alert__title";
+  title.textContent = "Confirm destructive action";
   const text = document.createElement("p");
-  text.className = "history-confirm__text";
+  text.className = "mp-alert__message history-confirm__text";
   if (action === "disableSaving") {
     text.textContent = "Saving will stop and all recent history and progress will be deleted.";
   } else if (action === "removeSelected") {
@@ -2934,11 +3006,12 @@ function renderHistoryConfirm(action: HistoryAction): HTMLElement {
     }),
     makeButton(
       action === "disableSaving" ? "Disable and clear" : "Confirm",
-      "mp-button--primary mp-button--sm",
+      "mp-button--danger mp-button--sm",
       () => void confirmHistoryAction(action)
     )
   );
-  box.append(text, row);
+  content.append(title, text, row);
+  box.append(icon, content);
   return box;
 }
 
@@ -2993,10 +3066,10 @@ async function handleUpdateSettings(next: LibrarySettings): Promise<void> {
 
 function renderRecentTable(recents: RecentComic[], saving: boolean): HTMLElement {
   const wrap = document.createElement("div");
-  wrap.className = "recent-table-wrap";
+  wrap.className = "table-shell table-scroll table-scroll--overflow recent-table-wrap";
 
   const table = document.createElement("table");
-  table.className = "recent-table";
+  table.className = "mp-table mp-table--dense mp-table--overflow recent-table";
   table.setAttribute("aria-label", "Recent history");
 
   const thead = document.createElement("thead");
@@ -3054,7 +3127,7 @@ function renderRecentRow(recent: RecentComic, saving: boolean): HTMLTableRowElem
   }
 
   const titleTd = document.createElement("td");
-  titleTd.className = "recent-table__col--title";
+  titleTd.className = "mp-table__primary recent-table__col--title";
   const titleBtn = document.createElement("button");
   titleBtn.type = "button";
   titleBtn.className = "recent-table__title-btn";
@@ -3073,19 +3146,19 @@ function renderRecentRow(recent: RecentComic, saving: boolean): HTMLTableRowElem
   row.append(typeTd);
 
   const progressTd = document.createElement("td");
-  progressTd.className = "recent-table__col--progress";
+  progressTd.className = "mp-table__mono recent-table__col--progress";
   progressTd.textContent = `${recent.currentPage + 1} / ${recent.pageCount}`;
   row.append(progressTd);
 
   const openedTd = document.createElement("td");
-  openedTd.className = "recent-table__col--opened";
+  openedTd.className = "mp-table__mono recent-table__col--opened";
   openedTd.textContent = formatLastOpened(recent.lastOpened);
   row.append(openedTd);
 
   const actionsTd = document.createElement("td");
-  actionsTd.className = "recent-table__col--actions";
+  actionsTd.className = "mp-table__action-cell recent-table__col--actions";
   const actions = document.createElement("div");
-  actions.className = "recent-table__actions mp-button-row";
+  actions.className = "mp-table__actions recent-table__actions mp-button-row";
   actions.append(
     makeButton("Resume", "mp-button--primary mp-button--sm", () => void handleOpenRecent(recent.path))
   );
@@ -3288,16 +3361,22 @@ function renderReader(): HTMLElement {
   );
 
   const progress = document.createElement("div");
-  progress.className = "reader__progress";
+  progress.className = "mp-progress mp-progress--sm reader__progress";
   progress.setAttribute("role", "progressbar");
   progress.setAttribute("aria-valuemin", "1");
   progress.setAttribute("aria-valuemax", String(comic.pageCount));
   const activeForProgress = mode === "webtoon" ? state.webtoonActiveIndex : state.pageIndex;
   progress.setAttribute("aria-valuenow", String(activeForProgress + 1));
+  progress.style.setProperty(
+    "--mp-progress",
+    `${comic.pageCount <= 1 ? 100 : ((activeForProgress + 1) / comic.pageCount) * 100}%`
+  );
+  const track = document.createElement("div");
+  track.className = "mp-progress__track";
   const bar = document.createElement("div");
-  bar.className = "reader__progress-bar";
-  bar.style.width = `${comic.pageCount <= 1 ? 100 : ((activeForProgress + 1) / comic.pageCount) * 100}%`;
-  progress.append(bar);
+  bar.className = "mp-progress__fill";
+  track.append(bar);
+  progress.append(track);
 
   controls.append(
     prev,
@@ -3557,8 +3636,15 @@ function mountSingleReader(
   stage.append(leftZone, rightZone);
 
   const loading = document.createElement("div");
-  loading.className = "reader__loading";
-  loading.textContent = "Loading page";
+  loading.className = "reader__loading mp-spinner-label";
+  loading.setAttribute("role", "status");
+  const loadingSpinner = document.createElement("span");
+  loadingSpinner.className = "mp-spinner mp-spinner--sm";
+  loadingSpinner.setAttribute("aria-hidden", "true");
+  const loadingText = document.createElement("span");
+  loadingText.className = "mp-spinner-label__text";
+  loadingText.textContent = "Loading page";
+  loading.append(loadingSpinner, loadingText);
   if (!pageCache.has(state.pageIndex)) stage.append(loading);
 
   const cached = pageCache.get(state.pageIndex);
@@ -3934,12 +4020,14 @@ function mountWebtoonReader(stage: HTMLElement, comic: Comic, generation: number
     }
     const input = document.querySelector(".reader__page-input") as HTMLInputElement | null;
     if (input) input.value = String(index + 1);
-    const bar = document.querySelector(".reader__progress-bar") as HTMLElement | null;
-    if (bar) {
-      bar.style.width = `${comic.pageCount <= 1 ? 100 : ((index + 1) / comic.pageCount) * 100}%`;
+    const progress = document.querySelector(".reader__progress") as HTMLElement | null;
+    if (progress) {
+      progress.style.setProperty(
+        "--mp-progress",
+        `${comic.pageCount <= 1 ? 100 : ((index + 1) / comic.pageCount) * 100}%`
+      );
+      progress.setAttribute("aria-valuenow", String(index + 1));
     }
-    const progress = document.querySelector(".reader__progress");
-    if (progress) progress.setAttribute("aria-valuenow", String(index + 1));
     void loadPages(
       [...cacheIndices(index, comic.pageCount, "webtoon")],
       generation,
